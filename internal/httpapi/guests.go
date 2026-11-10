@@ -9,12 +9,11 @@ import (
 	"github.com/google/uuid"
 	"image"
 	"io"
-	"pictide.local/studio/internal/media"
-	"pictide.local/studio/internal/security"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
+	"pictide.local/studio/internal/media"
+	"pictide.local/studio/internal/security"
 	"time"
 )
 
@@ -87,13 +86,13 @@ func (s *Server) guestUpload(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		photo := uuid.NewString()
-		err = os.WriteFile(filepath.Join(s.Config.MediaDir, photo+"_pending.png"), assets.Master, 0600)
+		err = s.writeMedia(photo+"_pending.png", assets.Master)
 		if err == nil {
 			_, err = s.DB.Exec("INSERT INTO guest_uploads(id,gallery_id,name,hash,token_hash,status,created) VALUES(?,?,?,?,?,'pending',?)", photo, id, filepath.Base(h.Filename), hs, security.HashToken(token), now())
 		}
 		if err != nil {
 			s.removeAssets(photo)
-			_ = os.Remove(filepath.Join(s.Config.MediaDir, photo+"_pending.png"))
+			_ = s.removeMedia(photo + "_pending.png")
 			errs = append(errs, h.Filename+": could not save")
 			continue
 		}
@@ -140,7 +139,7 @@ func (s *Server) guestPreview(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	http.ServeFile(w, r, filepath.Join(s.Config.MediaDir, id+"_pending.png"))
+	s.serveMedia(w, r, id+"_pending.png")
 }
 func (s *Server) reviewGuest(w http.ResponseWriter, r *http.Request) {
 	s.mediaMu.Lock()
@@ -166,7 +165,7 @@ func (s *Server) reviewGuest(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		data, e := os.ReadFile(filepath.Join(s.Config.MediaDir, id+"_pending.png"))
+		data, e := s.readMedia(id + "_pending.png")
 		if e != nil || s.processPhoto(id, data, g) != nil {
 			fail(w, 500, "Could not process photo.")
 			return
@@ -185,7 +184,7 @@ func (s *Server) reviewGuest(w http.ResponseWriter, r *http.Request) {
 		}
 		if e != nil {
 			for _, suffix := range []string{".jpg", "_thumb.jpg", "_clean.jpg", "_thumb_clean.jpg", ".png", ".original"} {
-				_ = os.Remove(filepath.Join(s.Config.MediaDir, id+suffix))
+				_ = s.removeMedia(id + suffix)
 			}
 			fail(w, 409, "Photo may already be in the gallery.")
 			return
@@ -196,7 +195,7 @@ func (s *Server) reviewGuest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	_ = os.Remove(filepath.Join(s.Config.MediaDir, id+"_pending.png"))
+	_ = s.removeMedia(id + "_pending.png")
 	respond(w, 200, map[string]bool{"ok": true})
 }
 func (s *Server) deleteGallery(w http.ResponseWriter, r *http.Request) {
@@ -245,9 +244,9 @@ func (s *Server) deleteGallery(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, p := range photos {
 		s.removeAssets(str(p["id"]))
-		_ = os.Remove(filepath.Join(s.Config.MediaDir, str(p["id"])+"_pending.png"))
+		_ = s.removeMedia(str(p["id"]) + "_pending.png")
 	}
-	_ = os.Remove(filepath.Join(s.Config.MediaDir, id+"_logo.png"))
+	_ = s.removeMedia(id + "_logo.png")
 	w.WriteHeader(204)
 }
 

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/subtle"
@@ -39,6 +40,7 @@ type Server struct {
 	uploads        map[string]attempt
 	mu             sync.Mutex
 	mediaMu        sync.Mutex
+	r2             *r2Storage
 	previewStore   previewStore
 	previewMu      sync.Mutex
 	previewPending map[string]bool
@@ -63,6 +65,16 @@ func New(db *sql.DB, c config.Config) (*Server, error) {
 	}
 	p := paystack.New(c.PaystackSecret)
 	server := &Server{DB: db, Config: c, Paystack: p, SigningKey: key, attempts: map[string]attempt{}, uploads: map[string]attempt{}, previewPending: map[string]bool{}, previewWorkers: make(chan struct{}, 2)}
+	if c.R2BucketName != "" {
+		var err error
+		server.r2, err = newR2Storage(c)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := server.migrateMedia(); err != nil {
+		return nil, fmt.Errorf("migrate media to R2: %w", err)
+	}
 	if c.ImgBBPreviews && c.ImgBBKey != "" {
 		server.previewStore = imgbb.New(c.ImgBBKey)
 	}
@@ -369,10 +381,15 @@ func (s *Server) proof(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	file := filepath.Join(s.Config.MediaDir, id+suffix)
+	data, err := s.readMedia(id + suffix)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
 	if publicPreview == 1 && s.previewStore != nil && s.serveImgBBPreview(w, r, id, suffix, file) {
 		return
 	}
-	http.ServeFile(w, r, file)
+	http.ServeContent(w, r, id+suffix, time.Time{}, bytes.NewReader(data))
 }
 
 var _ = errors.New

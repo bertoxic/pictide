@@ -136,6 +136,7 @@ func New(c config.Config, legacy *sql.DB, legacyAPI *httpapi.Server) (*Platform,
 			}
 			sc := c
 			sc.MediaDir = filepath.Join(filepath.Dir(c.DatabasePath), "studios", a.id, "media")
+			sc.R2Prefix = "studios/" + a.id
 			a.api, err = httpapi.New(a.db, sc)
 			if err != nil {
 				return nil, err
@@ -351,6 +352,7 @@ func (p *Platform) createStudio(username, password, email string) (*studio, erro
 	}
 	sc := p.cfg
 	sc.MediaDir = filepath.Join(dir, "media")
+	sc.R2Prefix = "studios/" + id
 	api, e := httpapi.New(db, sc)
 	if e != nil {
 		db.Close()

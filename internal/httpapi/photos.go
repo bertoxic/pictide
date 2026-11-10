@@ -13,11 +13,10 @@ import (
 	"image"
 	"image/png"
 	"io"
-	"pictide.local/studio/internal/media"
 	"math"
 	"net/http"
-	"os"
 	"path/filepath"
+	"pictide.local/studio/internal/media"
 	"regexp"
 	"strings"
 )
@@ -29,31 +28,14 @@ func (s *Server) opts(g map[string]any) media.Options {
 	if str(g["watermark_logo"]) == "" {
 		file = filepath.Join(s.Config.MediaDir, "studio_logo.png")
 	}
-	if f, e := os.Open(file); e == nil {
-		opt.Brand, _, _ = image.Decode(f)
-		f.Close()
+	if data, e := s.readMedia(filepath.Base(file)); e == nil {
+		opt.Brand, _, _ = image.Decode(bytes.NewReader(data))
 	}
 	return opt
 }
 func (s *Server) writeAssets(id string, a media.Assets) error {
 	for suffix, data := range map[string][]byte{".jpg": a.Preview, "_thumb.jpg": a.Thumb, "_clean.jpg": a.CleanPreview, "_thumb_clean.jpg": a.CleanThumb, ".png": a.Master} {
-		f, err := os.CreateTemp(s.Config.MediaDir, ".lumen-*")
-		if err != nil {
-			return err
-		}
-		tmp := f.Name()
-		if err = f.Chmod(0600); err == nil {
-			_, err = f.Write(data)
-		}
-		closeErr := f.Close()
-		if err == nil {
-			err = closeErr
-		}
-		if err == nil {
-			err = os.Rename(tmp, filepath.Join(s.Config.MediaDir, id+suffix))
-		}
-		if err != nil {
-			os.Remove(tmp)
+		if err := s.writeMedia(id+suffix, data); err != nil {
 			return err
 		}
 	}
@@ -62,7 +44,7 @@ func (s *Server) writeAssets(id string, a media.Assets) error {
 func (s *Server) removeAssets(id string) {
 	_, _ = s.DB.Exec("DELETE FROM imgbb_previews WHERE photo_id=?", id)
 	for _, suffix := range []string{".jpg", "_thumb.jpg", "_clean.jpg", "_thumb_clean.jpg", ".png", ".original"} {
-		_ = os.Remove(filepath.Join(s.Config.MediaDir, id+suffix))
+		_ = s.removeMedia(id + suffix)
 	}
 }
 func (s *Server) processPhoto(id string, data []byte, g map[string]any) error {
@@ -70,7 +52,7 @@ func (s *Server) processPhoto(id string, data []byte, g map[string]any) error {
 	if err != nil {
 		return err
 	}
-	if err = os.WriteFile(filepath.Join(s.Config.MediaDir, id+".original"), data, 0600); err != nil {
+	if err = s.writeMedia(id+".original", data); err != nil {
 		return err
 	}
 	if err = s.writeAssets(id, a); err != nil {
@@ -322,7 +304,7 @@ func (s *Server) regenGallery(id string) (int, []string) {
 	errs := []string{}
 	for _, p := range rows {
 		photo := str(p["id"])
-		data, e := os.ReadFile(filepath.Join(s.Config.MediaDir, photo+".original"))
+		data, e := s.readMedia(photo + ".original")
 		if e == nil {
 			var a media.Assets
 			a, e = media.Process(data, s.opts(g))
@@ -393,7 +375,7 @@ func (s *Server) saveLogo(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	e = png.Encode(&buf, imaging.Fit(img, 320, 160, imaging.Linear))
 	if e == nil {
-		e = os.WriteFile(filepath.Join(s.Config.MediaDir, filename), buf.Bytes(), 0600)
+		e = s.writeMedia(filename, buf.Bytes())
 	}
 	if e != nil {
 		fail(w, 500, "Could not save logo.")
@@ -424,7 +406,7 @@ func (s *Server) deleteLogo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	_ = os.Remove(filepath.Join(s.Config.MediaDir, filename))
+	_ = s.removeMedia(filename)
 	respond(w, 200, map[string]bool{"ok": true})
 }
 func (s *Server) applyBrand(w http.ResponseWriter, r *http.Request) {

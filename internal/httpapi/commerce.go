@@ -8,12 +8,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"io"
-	"pictide.local/studio/internal/commerce"
-	"pictide.local/studio/internal/security"
 	"net/http"
 	"net/mail"
-	"os"
 	"path/filepath"
+	"pictide.local/studio/internal/commerce"
+	"pictide.local/studio/internal/security"
 	"strconv"
 	"strings"
 	"time"
@@ -271,7 +270,7 @@ func (s *Server) downloadLink(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if _, err := os.Stat(filepath.Join(s.Config.MediaDir, id+".png")); err != nil {
+	if _, err := s.readMedia(id + ".png"); err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -304,7 +303,7 @@ func (s *Server) sendDownload(w http.ResponseWriter, r *http.Request, id, name s
 	}
 	filename := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)) + ".png"
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-	http.ServeFile(w, r, filepath.Join(s.Config.MediaDir, id+".png"))
+	s.serveMedia(w, r, id+".png")
 }
 func (s *Server) freeName(id string) (string, error) {
 	var name string
@@ -339,11 +338,11 @@ func (s *Server) clean(w http.ResponseWriter, r *http.Request) {
 	file := filepath.Join(s.Config.MediaDir, id+"_clean.jpg")
 	if r.URL.Query().Get("size") == "thumb" {
 		thumb := filepath.Join(s.Config.MediaDir, id+"_thumb_clean.jpg")
-		if _, err := os.Stat(thumb); err == nil {
+		if _, err := s.readMedia(filepath.Base(thumb)); err == nil {
 			file = thumb
 		}
 	}
-	http.ServeFile(w, r, file)
+	s.serveMedia(w, r, filepath.Base(file))
 }
 func (s *Server) freeArchive(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -360,16 +359,15 @@ func (s *Server) freeArchive(w http.ResponseWriter, r *http.Request) {
 		if _, e := uuid.Parse(photo); e != nil {
 			continue
 		}
-		f, e := os.Open(filepath.Join(s.Config.MediaDir, photo+".png"))
+		data, e := s.readMedia(photo + ".png")
 		if e != nil {
 			continue
 		}
 		name := strings.TrimSuffix(filepath.Base(str(p["name"])), filepath.Ext(str(p["name"]))) + ".png"
 		dst, e := z.Create(fmt.Sprintf("%d-%s", i+1, name))
 		if e == nil {
-			_, _ = io.Copy(dst, f)
+			_, _ = dst.Write(data)
 		}
-		f.Close()
 	}
 	_ = z.Close()
 }

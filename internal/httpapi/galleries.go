@@ -7,8 +7,6 @@ import (
 	"github.com/google/uuid"
 	"math"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -151,7 +149,7 @@ func (s *Server) updateGallery(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	price, _ := strconv.ParseFloat(s.setting("default_price", "5000"), 64)
-	_, err := os.Stat(filepath.Join(s.Config.MediaDir, "studio_logo.png"))
+	_, err := s.readMedia("studio_logo.png")
 	respond(w, 200, map[string]any{"studio_name": s.setting("studio_name", "Pictide Studio"), "default_price": price, "contact_email": s.setting("contact_email", ""), "studio_logo": err == nil})
 }
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
