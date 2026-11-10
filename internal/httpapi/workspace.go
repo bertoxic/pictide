@@ -88,6 +88,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, user *account) bool
 	case r.URL.Path == "/api/orders" && r.Method == "GET":
 		s.listOrders(w, r, user)
 		return true
+	case r.URL.Path == "/api/wallet" && r.Method == "GET":
+		s.wallet(w, r, user)
+		return true
 	case strings.HasPrefix(r.URL.Path, "/api/direct-uploads/") && strings.HasSuffix(r.URL.Path, "/complete") && r.Method == "POST":
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/direct-uploads/"), "/complete")
 		if id == "" || strings.Contains(id, "/") {
