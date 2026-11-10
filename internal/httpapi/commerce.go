@@ -3,7 +3,9 @@ package httpapi
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -267,6 +269,40 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request, id string) {
 	s.sendAsset(w, r, id, "master", "image/png")
 }
 func (s *Server) sendAsset(w http.ResponseWriter, r *http.Request, id, variant, contentType string) {
+	if variant == "master" && s.r2 != nil {
+		var photo struct {
+			StudioID string `bson:"studio_id"`
+			R2Master bool   `bson:"r2_master"`
+		}
+		if err := s.db.Collection("photos").FindOne(r.Context(), bson.M{"id": id, "ready": true}).Decode(&photo); err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		key := r2PhotoKey(photo.StudioID, id, "master")
+		if !photo.R2Master {
+			var legacy bytes.Buffer
+			if _, err := s.db.GridFSBucket().DownloadToStream(r.Context(), id+":master", &legacy); err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			if err := s.r2.put(r.Context(), key, "image/png", legacy.Bytes()); err != nil {
+				fail(w, 502, "Unable to prepare download storage.")
+				return
+			}
+			if _, err := s.db.Collection("photos").UpdateOne(r.Context(), bson.M{"id": id, "studio_id": photo.StudioID, "ready": true}, bson.M{"$set": bson.M{"r2_master": true}}); err != nil {
+				fail(w, 500, "Unable to prepare download.")
+				return
+			}
+		}
+		url, err := s.r2.getURL(r.Context(), key)
+		if err != nil {
+			fail(w, 502, "Unable to prepare download.")
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, url, http.StatusFound)
+		return
+	}
 	var data bytes.Buffer
 	if _, err := s.db.GridFSBucket().DownloadToStream(r.Context(), id+":"+variant, &data); err != nil {
 		http.NotFound(w, r)
@@ -341,49 +377,85 @@ func (s *Server) freeArchive(w http.ResponseWriter, r *http.Request, id string) 
 		http.NotFound(w, r)
 		return
 	}
-	cur, err := s.db.Collection("photos").Find(r.Context(), bson.M{"studio_id": gallery.StudioID, "gallery_id": id, "ready": true, "archived": bson.M{"$ne": 1}}, options.Find().SetProjection(bson.M{"id": 1, "name": 1, "price": 1}))
+	cur, err := s.db.Collection("photos").Find(r.Context(), bson.M{"studio_id": gallery.StudioID, "gallery_id": id, "ready": true, "archived": bson.M{"$ne": 1}}, options.Find().SetProjection(bson.M{"id": 1, "name": 1, "price": 1, "r2_master": 1}))
 	if err != nil {
 		fail(w, 500, "Unable to load photos.")
 		return
 	}
 	defer cur.Close(r.Context())
 	var photos []struct {
-		ID    string `bson:"id"`
-		Name  string `bson:"name"`
-		Price *int64 `bson:"price"`
+		ID       string `bson:"id"`
+		Name     string `bson:"name"`
+		Price    *int64 `bson:"price"`
+		R2Master bool   `bson:"r2_master"`
 	}
 	if cur.All(r.Context(), &photos) != nil {
 		fail(w, 500, "Unable to load photos.")
 		return
 	}
+	writeArchive := func(dst io.Writer) error {
+		archive := zip.NewWriter(dst)
+		for i, photo := range photos {
+			price := gallery.Price
+			if photo.Price != nil {
+				price = *photo.Price
+			}
+			if price != 0 {
+				continue
+			}
+			var source io.ReadCloser
+			var e error
+			if photo.R2Master {
+				if s.r2 == nil {
+					return errors.New("R2 storage is unavailable")
+				}
+				source, e = s.r2.open(r.Context(), r2PhotoKey(gallery.StudioID, photo.ID, "master"))
+			} else {
+				source, e = s.db.GridFSBucket().OpenDownloadStream(r.Context(), photo.ID+":master")
+			}
+			if e != nil {
+				return e
+			}
+			name := path.Base(strings.ReplaceAll(photo.Name, "\\", "/"))
+			if name == "." || name == "/" || name == "" {
+				name = "photo"
+			}
+			name = strings.TrimSuffix(name, path.Ext(name))
+			entry, e := archive.CreateHeader(&zip.FileHeader{Name: fmt.Sprintf("%03d-%s.png", i+1, name), Method: zip.Store})
+			if e == nil {
+				_, e = io.Copy(entry, source)
+			}
+			source.Close()
+			if e != nil {
+				return e
+			}
+		}
+		return archive.Close()
+	}
+	if s.r2 != nil {
+		token, e := security.Token()
+		if e != nil {
+			fail(w, 500, "Unable to prepare archive.")
+			return
+		}
+		key := "pictide/temporary/archives/" + token + ".zip"
+		if e = s.r2.putArchive(r.Context(), key, writeArchive); e != nil {
+			cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = s.r2.delete(cleanup, key)
+			cancel()
+			fail(w, 502, "Unable to prepare archive.")
+			return
+		}
+		url, e := s.r2.getURL(r.Context(), key)
+		if e != nil {
+			fail(w, 502, "Unable to prepare archive.")
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, url, http.StatusFound)
+		return
+	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="photos.zip"`)
-	archive := zip.NewWriter(w)
-	defer archive.Close()
-	for i, photo := range photos {
-		price := gallery.Price
-		if photo.Price != nil {
-			price = *photo.Price
-		}
-		if price != 0 {
-			continue
-		}
-		source, e := s.db.GridFSBucket().OpenDownloadStream(r.Context(), photo.ID+":master")
-		if e != nil {
-			return
-		}
-		name := path.Base(strings.ReplaceAll(photo.Name, "\\", "/"))
-		if name == "." || name == "/" || name == "" {
-			name = "photo"
-		}
-		name = strings.TrimSuffix(name, path.Ext(name))
-		entry, e := archive.Create(fmt.Sprintf("%03d-%s.png", i+1, name))
-		if e == nil {
-			_, e = io.Copy(entry, source)
-		}
-		source.Close()
-		if e != nil {
-			return
-		}
-	}
+	_ = writeArchive(w)
 }

@@ -44,6 +44,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, user *account) bool
 		id := strings.TrimPrefix(r.URL.Path, "/api/galleries/")
 		if parts := strings.Split(id, "/"); len(parts) == 2 {
 			switch {
+			case parts[1] == "direct-upload" && r.Method == "POST":
+				s.startDirectUpload(w, r, user, parts[0])
+				return true
 			case parts[1] == "cover" && r.Method == "PUT":
 				s.cover(w, r, user, parts[0])
 				return true
@@ -81,6 +84,13 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, user *account) bool
 		return true
 	case r.URL.Path == "/api/orders" && r.Method == "GET":
 		s.listOrders(w, r, user)
+		return true
+	case strings.HasPrefix(r.URL.Path, "/api/direct-uploads/") && strings.HasSuffix(r.URL.Path, "/complete") && r.Method == "POST":
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/direct-uploads/"), "/complete")
+		if id == "" || strings.Contains(id, "/") {
+			return false
+		}
+		s.completeDirectUpload(w, r, user, id)
 		return true
 	case strings.HasPrefix(r.URL.Path, "/api/orders/") && strings.HasSuffix(r.URL.Path, "/sync") && r.Method == "POST":
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/orders/"), "/sync")

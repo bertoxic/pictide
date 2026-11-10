@@ -24,6 +24,7 @@ import (
 type Server struct {
 	db       *mongo.Database
 	cfg      config.Config
+	r2       *r2Storage
 	mu       sync.Mutex
 	attempts map[string]attempt
 }
@@ -47,7 +48,11 @@ func New(ctx context.Context, db *mongo.Database, cfg config.Config) (*Server, e
 	if db == nil || len(cfg.SigningKey) < 32 || len(cfg.AdminPassword) < 12 {
 		return nil, errors.New("MongoDB, a signing key of at least 32 characters, and an admin password of at least 12 characters are required")
 	}
-	_, err := db.Collection("accounts").Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "username", Value: 1}}, Options: options.Index().SetUnique(true)})
+	r2, err := newR2Storage(cfg)
+	if err != nil {
+		return nil, err
+	}
+	_, err = db.Collection("accounts").Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "username", Value: 1}}, Options: options.Index().SetUnique(true)})
 	if err != nil {
 		return nil, err
 	}
@@ -66,6 +71,12 @@ func New(ctx context.Context, db *mongo.Database, cfg config.Config) (*Server, e
 	if err != nil {
 		return nil, err
 	}
+	if r2 != nil {
+		_, err = db.Collection("direct_uploads").Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)})
+		if err != nil {
+			return nil, err
+		}
+	}
 	hash, err := security.PasswordHash(cfg.AdminPassword)
 	if err != nil {
 		return nil, err
@@ -78,7 +89,7 @@ func New(ctx context.Context, db *mongo.Database, cfg config.Config) (*Server, e
 	if err != nil {
 		return nil, err
 	}
-	return &Server{db: db, cfg: cfg, attempts: map[string]attempt{}}, nil
+	return &Server{db: db, cfg: cfg, r2: r2, attempts: map[string]attempt{}}, nil
 }
 
 func timestamp() string { return time.Now().UTC().Format(time.RFC3339Nano) }
@@ -192,7 +203,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.PaystackSecret != "" {
 			mode = "paystack"
 		}
-		reply(w, 200, map[string]any{"payments": mode, "public_url": s.cfg.PublicURL, "email_configured": false, "imgbb_previews": false})
+		reply(w, 200, map[string]any{"payments": mode, "public_url": s.cfg.PublicURL, "email_configured": false, "imgbb_previews": false, "r2_uploads": s.r2 != nil})
 		return
 	}
 	if p == "/api/v1/health" && r.Method == "GET" {
