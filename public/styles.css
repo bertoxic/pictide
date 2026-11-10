@@ -62,3 +62,15 @@
 .intro-share-image{background-size:200% auto;background-position:right bottom}
 .intro-order-photo{height:105px;margin:-10px 0 18px;background-size:200% auto;background-position:left bottom}
 @media(max-width:800px){.intro-order-photo{height:65px;margin:0 0 8px}}
+
+/* A quiet entrance on each step; controls remain immediately usable. */
+@keyframes intro-rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes intro-card-in{from{opacity:0;transform:translateY(20px) scale(.97) rotate(-1deg)}to{opacity:1;transform:translateY(0) scale(1) rotate(-3deg)}}
+@keyframes intro-art-in{from{opacity:0;transform:translateY(20px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes intro-ring-in{from{opacity:0;transform:scale(.92)}to{opacity:.7;transform:scale(1)}}
+.intro-kicker,.intro-copy h1,.intro-copy p,.intro-controls,.intro-footnote{animation:intro-rise .55s cubic-bezier(.22,1,.36,1) both}
+.intro-kicker{animation-delay:.04s}.intro-copy h1{animation-delay:.10s}.intro-copy p{animation-delay:.16s}.intro-controls{animation-delay:.22s}.intro-footnote{animation-delay:.28s}
+.intro-visual:before,.intro-visual:after{animation:intro-ring-in .9s cubic-bezier(.22,1,.36,1) both}.intro-visual:after{animation-delay:.1s}
+.intro-art{animation:intro-art-in .75s cubic-bezier(.22,1,.36,1) .1s both}.intro-art-gallery{animation-name:intro-card-in}
+.intro-next{transition:background-color .2s ease,box-shadow .2s ease,transform .2s ease}.intro-next span{transition:transform .2s ease}.intro-next:hover{transform:translateY(-2px);box-shadow:0 8px 18px #39431f30}.intro-next:hover span{transform:translateX(4px)}.intro-next:active{transform:translateY(0)}
+@media(prefers-reduced-motion:reduce){.intro-kicker,.intro-copy h1,.intro-copy p,.intro-controls,.intro-footnote,.intro-art,.intro-visual:before,.intro-visual:after{animation:none}.intro-next,.intro-next span{transition:none}.intro-next:hover,.intro-next:hover span{transform:none}}
