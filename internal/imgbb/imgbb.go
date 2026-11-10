@@ -45,10 +45,13 @@ func (c *Client) Upload(ctx context.Context, data []byte) (string, error) {
 	if len(data) == 0 || len(data) > MaxImageBytes {
 		return "", errors.New("image exceeds ImgBB size limit")
 	}
-	if c.Expiration < time.Minute || c.Expiration > 180*24*time.Hour {
+	if c.Expiration != 0 && (c.Expiration < time.Minute || c.Expiration > 180*24*time.Hour) {
 		return "", errors.New("invalid ImgBB expiry")
 	}
-	values := url.Values{"key": {c.key}, "image": {base64.StdEncoding.EncodeToString(data)}, "expiration": {fmt.Sprint(int64(c.Expiration.Seconds()))}}
+	values := url.Values{"key": {c.key}, "image": {base64.StdEncoding.EncodeToString(data)}}
+	if c.Expiration != 0 {
+		values.Set("expiration", fmt.Sprint(int64(c.Expiration.Seconds())))
+	}
 	req, e := http.NewRequestWithContext(ctx, "POST", c.endpoint, strings.NewReader(values.Encode()))
 	if e != nil {
 		return "", e
@@ -95,7 +98,10 @@ func (c *Client) Download(ctx context.Context, raw string) ([]byte, error) {
 		return nil, fmt.Errorf("ImgBB image returned HTTP %d", resp.StatusCode)
 	}
 	data, e := io.ReadAll(io.LimitReader(resp.Body, MaxImageBytes+1))
-	if e != nil || len(data) == 0 || len(data) > MaxImageBytes || !bytes.HasPrefix(data, []byte{0xff, 0xd8, 0xff}) {
+	jpeg := bytes.HasPrefix(data, []byte{0xff, 0xd8, 0xff})
+	png := bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n"))
+	webp := len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP"
+	if e != nil || len(data) == 0 || len(data) > MaxImageBytes || !(jpeg || png || webp) {
 		return nil, errors.New("invalid ImgBB image")
 	}
 	return data, nil
