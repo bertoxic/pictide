@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"pictide.local/studio/internal/config"
+	"pictide.local/studio/internal/httpapi"
 	"pictide.local/studio/internal/mongostore"
 )
 
@@ -41,19 +41,14 @@ func Run() error {
 	if err == nil {
 		err = galleries.EnsureIndexes(ctx)
 	}
+	var handler *httpapi.Server
+	if err == nil {
+		handler, err = httpapi.New(ctx, client.Database(c.MongoDBDatabase), c)
+	}
 	cancel()
 	if err != nil {
-		return errors.New("MongoDB index initialization failed")
+		return fmt.Errorf("application initialization failed: %w", err)
 	}
-
-	// The former application handlers have not yet been replaced. Return an
-	// explicit unavailable response instead of presenting a working application.
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Application features are unavailable during the MongoDB conversion."})
-	})
 	host := c.Host
 	if os.Getenv("VERCEL") == "1" {
 		host = "0.0.0.0"
@@ -67,7 +62,7 @@ func Run() error {
 		defer cancel()
 		_ = server.Shutdown(shutdown)
 	}()
-	log.Printf("Pictide conversion service listening on %s; application features unavailable", server.Addr)
+	log.Printf("Pictide server listening on %s; some features are still being converted", server.Addr)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
