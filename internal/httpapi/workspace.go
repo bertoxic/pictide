@@ -25,6 +25,12 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, user *account) bool
 	case r.URL.Path == "/api/admin/accounts" && r.Method == "POST":
 		s.createAccount(w, r, user)
 		return true
+	case r.URL.Path == "/api/admin/accounts" && r.Method == "GET":
+		s.listAccounts(w, r, user)
+		return true
+	case r.URL.Path == "/api/admin/activity" && r.Method == "GET":
+		s.accountActivity(w, r, user)
+		return true
 	case r.URL.Path == "/api/admin/account-status" && r.Method == "POST":
 		s.accountStatus(w, r, user)
 		return true
@@ -180,7 +186,19 @@ func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request, user *acc
 		totals["pending_orders"] = totals["pending_orders"].(int64) + pending
 		totals["pending_withdrawals"] = totals["pending_withdrawals"].(int64) + withdrawals
 	}
-	reply(w, 200, bson.M{"accounts": accounts, "totals": totals, "audit": []any{}})
+	audit := []bson.M{}
+	events, err := s.db.Collection("admin_audit").Find(ctx, bson.M{}, options.Find().SetProjection(bson.M{"_id": 0}).SetSort(bson.D{{Key: "created", Value: -1}}).SetLimit(50))
+	if err != nil {
+		fail(w, 500, "Unable to load audit history.")
+		return
+	}
+	if err = events.All(ctx, &audit); err != nil {
+		events.Close(ctx)
+		fail(w, 500, "Unable to load audit history.")
+		return
+	}
+	events.Close(ctx)
+	reply(w, 200, bson.M{"accounts": accounts, "totals": totals, "audit": audit})
 }
 
 func (s *Server) createAccount(w http.ResponseWriter, r *http.Request, user *account) {

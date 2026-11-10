@@ -67,6 +67,14 @@ func TestMongoWorkspace(t *testing.T) {
 		t.Fatalf("login: %d %s", w.Code, w.Body.String())
 	}
 	session = w.Result().Cookies()[0]
+	w = request("GET", "/api/admin/accounts", nil, "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"username":"admin"`) {
+		t.Fatalf("account list: %d %s", w.Code, w.Body.String())
+	}
+	w = request("GET", "/api/admin/activity?account=legacy", nil, "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"username":"admin"`) {
+		t.Fatalf("account activity: %d %s", w.Code, w.Body.String())
+	}
 	w = request("GET", "/api/admin/insights", nil, "")
 	var insights struct {
 		Timeline    []any `json:"timeline"`
