@@ -27,18 +27,19 @@ type orderItem struct {
 	UnitPrice int64  `bson:"unit_price"`
 }
 type purchase struct {
-	ID            string      `bson:"id"`
-	StudioID      string      `bson:"studio_id"`
-	GalleryID     string      `bson:"gallery_id"`
-	Email         string      `bson:"email"`
-	Amount        int64       `bson:"amount"`
-	Status        string      `bson:"status"`
-	Created       string      `bson:"created"`
-	PlatformFee   int64       `bson:"platform_fee"`
-	Items         []orderItem `bson:"items"`
-	TokenHash     string      `bson:"token_hash"`
-	DownloadsUsed int         `bson:"downloads_used"`
-	MaxDownloads  int         `bson:"max_downloads"`
+	ID              string      `bson:"id"`
+	StudioID        string      `bson:"studio_id"`
+	GalleryID       string      `bson:"gallery_id"`
+	Email           string      `bson:"email"`
+	Amount          int64       `bson:"amount"`
+	Status          string      `bson:"status"`
+	Created         string      `bson:"created"`
+	PlatformFee     int64       `bson:"platform_fee"`
+	Items           []orderItem `bson:"items"`
+	TokenHash       string      `bson:"token_hash"`
+	DownloadsUsed   int         `bson:"downloads_used"`
+	MaxDownloads    int         `bson:"max_downloads"`
+	PaymentProvider string      `bson:"payment_provider"`
 }
 
 func (s *Server) checkout(w http.ResponseWriter, r *http.Request) {

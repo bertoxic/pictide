@@ -19,6 +19,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, user *account) bool
 	case r.URL.Path == "/api/admin/overview" && r.Method == "GET":
 		s.adminOverview(w, r, user)
 		return true
+	case r.URL.Path == "/api/admin/insights" && r.Method == "GET":
+		s.adminInsights(w, r, user)
+		return true
 	case r.URL.Path == "/api/admin/accounts" && r.Method == "POST":
 		s.createAccount(w, r, user)
 		return true

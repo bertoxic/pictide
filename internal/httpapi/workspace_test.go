@@ -67,6 +67,15 @@ func TestMongoWorkspace(t *testing.T) {
 		t.Fatalf("login: %d %s", w.Code, w.Body.String())
 	}
 	session = w.Result().Cookies()[0]
+	w = request("GET", "/api/admin/insights", nil, "")
+	var insights struct {
+		Timeline    []any `json:"timeline"`
+		Orders      []any `json:"orders"`
+		Withdrawals []any `json:"withdrawals"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &insights) != nil || len(insights.Timeline) != 90 || insights.Orders == nil || insights.Withdrawals == nil {
+		t.Fatalf("admin insights: %d %s", w.Code, w.Body.String())
+	}
 	w = request("PUT", "/api/settings", []byte(`{"studio_name":"Demo","contact_email":"","default_price":"25"}`), "application/json")
 	if w.Code != 200 {
 		t.Fatalf("settings: %d %s", w.Code, w.Body.String())
