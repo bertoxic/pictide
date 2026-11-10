@@ -46,3 +46,21 @@ func TestImgBBPreviewConfiguration(t *testing.T) {
 		t.Fatal("ImgBB preview config not loaded", err)
 	}
 }
+
+func TestMongoDBConfiguration(t *testing.T) {
+	t.Setenv("LUMEN_ENV_FILE", filepath.Join(t.TempDir(), "missing.env"))
+	t.Setenv("LUMEN_PAYMENT_MODE", "paystack")
+	t.Setenv("PAYSTACK_SECRET_KEY", "test")
+	t.Setenv("LUMEN_HOST", "127.0.0.1")
+	t.Setenv("MONGODB_URI", "mongodb://localhost:27017")
+	t.Setenv("MONGODB_DATABASE", "")
+	c, err := Load()
+	if err != nil || c.MongoDBURI != "mongodb://localhost:27017" || c.MongoDBDatabase != "pictide" {
+		t.Fatal("default MongoDB configuration was not loaded", err)
+	}
+	t.Setenv("MONGODB_DATABASE", "studio_test")
+	c, err = Load()
+	if err != nil || c.MongoDBDatabase != "studio_test" {
+		t.Fatal("MongoDB database override was not loaded", err)
+	}
+}

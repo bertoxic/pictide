@@ -12,12 +12,13 @@ import (
 )
 
 type Config struct {
-	Host, Port, DataDir, DatabasePath, MediaDir, SigningKey, AdminPassword, PublicURL, PaymentMode, PaystackSecret string
-	FeeBPS                                                                                                         int
-	SMTPHost, SMTPPort, SMTPUser, SMTPPassword, SMTPFrom                                                           string
-	R2AccountID, R2AccessKeyID, R2SecretAccessKey, R2BucketName, R2Prefix                                          string
-	ImgBBKey                                                                                                       string
-	ImgBBPreviews                                                                                                  bool
+	Host, Port, DataDir, MediaDir, SigningKey, AdminPassword, PublicURL, PaymentMode, PaystackSecret string
+	FeeBPS                                                                                           int
+	SMTPHost, SMTPPort, SMTPUser, SMTPPassword, SMTPFrom                                             string
+	R2AccountID, R2AccessKeyID, R2SecretAccessKey, R2BucketName, R2Prefix                            string
+	ImgBBKey                                                                                         string
+	ImgBBPreviews                                                                                    bool
+	MongoDBURI, MongoDBDatabase                                                                      string
 }
 
 func Load() (Config, error) {
@@ -35,6 +36,8 @@ func Load() (Config, error) {
 		return fallback
 	}
 	c := Config{ImgBBKey: os.Getenv("IMGBB_API_KEY"), SMTPHost: os.Getenv("LUMEN_SMTP_HOST"), SMTPPort: get("LUMEN_SMTP_PORT", "587"), SMTPUser: os.Getenv("LUMEN_SMTP_USER"), SMTPPassword: os.Getenv("LUMEN_SMTP_PASSWORD"), SMTPFrom: os.Getenv("LUMEN_SMTP_FROM"), Host: get("LUMEN_HOST", "127.0.0.1"), Port: get("PORT", "3000"), DataDir: get("LUMEN_DATA_DIR", "data"), SigningKey: os.Getenv("LUMEN_SIGNING_KEY"), AdminPassword: os.Getenv("LUMEN_ADMIN_PASSWORD"), PublicURL: strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"), PaymentMode: get("LUMEN_PAYMENT_MODE", "paystack"), PaystackSecret: os.Getenv("PAYSTACK_SECRET_KEY")}
+	c.MongoDBURI = os.Getenv("MONGODB_URI")
+	c.MongoDBDatabase = get("MONGODB_DATABASE", "pictide")
 	c.R2AccountID, c.R2AccessKeyID, c.R2SecretAccessKey, c.R2BucketName = os.Getenv("R2_ACCOUNT_ID"), os.Getenv("R2_ACCESS_KEY_ID"), os.Getenv("R2_SECRET_ACCESS_KEY"), os.Getenv("R2_BUCKET_NAME")
 	if (c.R2AccountID != "" || c.R2AccessKeyID != "" || c.R2SecretAccessKey != "" || c.R2BucketName != "") && (c.R2AccountID == "" || c.R2AccessKeyID == "" || c.R2SecretAccessKey == "" || c.R2BucketName == "") {
 		return Config{}, fmt.Errorf("all R2 credentials and bucket name are required")
@@ -47,11 +50,6 @@ func Load() (Config, error) {
 	if c.ImgBBPreviews && c.ImgBBKey == "" {
 		return Config{}, fmt.Errorf("IMGBB_API_KEY is required when ImgBB previews are enabled")
 	}
-	dbDefault := filepath.Join(c.DataDir, "lumen.db")
-	if os.Getenv("LUMEN_DATA_DIR") == "" {
-		dbDefault = get("DB_PATH", dbDefault)
-	}
-	c.DatabasePath = get("LUMEN_DB_PATH", dbDefault)
 	c.MediaDir = get("LUMEN_MEDIA_DIR", filepath.Join(c.DataDir, "media"))
 	if c.PublicURL != "" {
 		u, err := url.Parse(c.PublicURL)
