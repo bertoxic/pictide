@@ -325,13 +325,39 @@ func (s *Server) listGalleries(w http.ResponseWriter, r *http.Request, user *acc
 		fail(w, 500, "Unable to load galleries.")
 		return
 	}
-	var photoTotal int64
+	ids := bson.A{}
 	for _, g := range page.Items {
-		count, e := s.db.Collection("photos").CountDocuments(r.Context(), bson.M{"studio_id": user.ID, "gallery_id": g["id"], "archived": bson.M{"$ne": 1}, "ready": true})
+		ids = append(ids, g["id"])
+	}
+	counts := map[string]int64{}
+	var photoTotal int64
+	if len(ids) > 0 {
+		pipeline := mongo.Pipeline{bson.D{{Key: "$match", Value: bson.M{"studio_id": user.ID, "gallery_id": bson.M{"$in": ids}, "archived": bson.M{"$ne": 1}, "ready": true}}}, bson.D{{Key: "$group", Value: bson.M{"_id": "$gallery_id", "count": bson.M{"$sum": 1}}}}}
+		cursor, e := s.db.Collection("photos").Aggregate(r.Context(), pipeline)
 		if e != nil {
 			fail(w, 500, "Unable to load galleries.")
 			return
 		}
+		defer cursor.Close(r.Context())
+		for cursor.Next(r.Context()) {
+			var v struct {
+				ID    string `bson:"_id"`
+				Count int64  `bson:"count"`
+			}
+			if cursor.Decode(&v) != nil {
+				fail(w, 500, "Unable to load galleries.")
+				return
+			}
+			counts[v.ID] = v.Count
+		}
+		if cursor.Err() != nil {
+			fail(w, 500, "Unable to load galleries.")
+			return
+		}
+	}
+	for _, g := range page.Items {
+		id, _ := g["id"].(string)
+		count := counts[id]
 		g["photo_count"] = count
 		photoTotal += count
 		g["cover"] = g["cover_photo"]
