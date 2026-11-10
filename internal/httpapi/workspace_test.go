@@ -169,4 +169,8 @@ func TestMongoWorkspace(t *testing.T) {
 	if w.Code != 200 || w.Header().Get("Content-Type") != "image/png" {
 		t.Fatalf("QR: %d", w.Code)
 	}
+	w = request("GET", "/api/galleries/"+gallery.ID+"/print?layout=a4&theme=botanical&title=Our+day&qr_color=%23405020&qr_background=%23ffffff", nil, "")
+	if w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") || !strings.Contains(w.Body.String(), "Our day") || !strings.Contains(w.Body.String(), "data:image/png;base64,") {
+		t.Fatalf("print card: %d %s", w.Code, w.Body.String())
+	}
 }

@@ -68,6 +68,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, user *account) bool
 			case parts[1] == "qr" && r.Method == "GET":
 				s.galleryQR(w, r, user, parts[0])
 				return true
+			case parts[1] == "print" && r.Method == "GET":
+				s.printGallery(w, r, user, parts[0])
+				return true
 			}
 		}
 		if strings.HasSuffix(id, "/photos") && r.Method == "POST" {
