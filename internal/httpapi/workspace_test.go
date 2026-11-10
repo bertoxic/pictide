@@ -138,6 +138,15 @@ func TestMongoWorkspace(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"total":1`) {
 		t.Fatalf("list: %d %s", w.Code, w.Body.String())
 	}
+	var page struct {
+		Items []struct {
+			Cover      string `json:"cover"`
+			PhotoCount int    `json:"photo_count"`
+		} `json:"items"`
+	}
+	if json.Unmarshal(w.Body.Bytes(), &page) != nil || len(page.Items) != 1 || page.Items[0].Cover != detail.Photos[0].ID || page.Items[0].PhotoCount != 1 {
+		t.Fatalf("gallery preview: %s", w.Body.String())
+	}
 	w = request("PATCH", "/api/galleries/"+gallery.ID+"/customization", []byte(`{"share_title":"Our day","share_color":"#405020"}`), "application/json")
 	if w.Code != 200 {
 		t.Fatalf("customize: %d %s", w.Code, w.Body.String())

@@ -330,9 +330,10 @@ func (s *Server) listGalleries(w http.ResponseWriter, r *http.Request, user *acc
 		ids = append(ids, g["id"])
 	}
 	counts := map[string]int64{}
+	previews := map[string]string{}
 	var photoTotal int64
 	if len(ids) > 0 {
-		pipeline := mongo.Pipeline{bson.D{{Key: "$match", Value: bson.M{"studio_id": user.ID, "gallery_id": bson.M{"$in": ids}, "archived": bson.M{"$ne": 1}, "ready": true}}}, bson.D{{Key: "$group", Value: bson.M{"_id": "$gallery_id", "count": bson.M{"$sum": 1}}}}}
+		pipeline := mongo.Pipeline{bson.D{{Key: "$match", Value: bson.M{"studio_id": user.ID, "gallery_id": bson.M{"$in": ids}, "archived": bson.M{"$ne": 1}, "ready": true}}}, bson.D{{Key: "$sort", Value: bson.D{{Key: "created", Value: 1}, {Key: "id", Value: 1}}}}, bson.D{{Key: "$group", Value: bson.M{"_id": "$gallery_id", "count": bson.M{"$sum": 1}, "preview": bson.M{"$first": "$id"}}}}}
 		cursor, e := s.db.Collection("photos").Aggregate(r.Context(), pipeline)
 		if e != nil {
 			fail(w, 500, "Unable to load galleries.")
@@ -341,14 +342,16 @@ func (s *Server) listGalleries(w http.ResponseWriter, r *http.Request, user *acc
 		defer cursor.Close(r.Context())
 		for cursor.Next(r.Context()) {
 			var v struct {
-				ID    string `bson:"_id"`
-				Count int64  `bson:"count"`
+				ID      string `bson:"_id"`
+				Count   int64  `bson:"count"`
+				Preview string `bson:"preview"`
 			}
 			if cursor.Decode(&v) != nil {
 				fail(w, 500, "Unable to load galleries.")
 				return
 			}
 			counts[v.ID] = v.Count
+			previews[v.ID] = v.Preview
 		}
 		if cursor.Err() != nil {
 			fail(w, 500, "Unable to load galleries.")
@@ -360,7 +363,11 @@ func (s *Server) listGalleries(w http.ResponseWriter, r *http.Request, user *acc
 		count := counts[id]
 		g["photo_count"] = count
 		photoTotal += count
-		g["cover"] = g["cover_photo"]
+		cover := stringValue(g["cover_photo"])
+		if cover == "" {
+			cover = previews[id]
+		}
+		g["cover"] = cover
 	}
 	reply(w, 200, bson.M{"items": page.Items, "total": page.Total, "photo_total": photoTotal, "offset": offset, "limit": limit, "has_more": offset+int64(len(page.Items)) < page.Total})
 }

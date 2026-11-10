@@ -24,3 +24,15 @@ test('owner photo batches keep filters and increase progressively',()=>{
  run('loadMoreOwnerPhotos()');assert.equal((nodes.get('#owner-photos').innerHTML.match(/class="photo"/g)||[]).length,120);
  run("photoQuery='Photo 124';updateOwnerPhotos()");assert.equal((nodes.get('#owner-photos').innerHTML.match(/class="photo"/g)||[]).length,1);
 });
+test('gallery detail exposes a compact filter control that opens and closes',()=>{
+ const {run,ctx,nodes}=environment();
+ run("current={id:'gallery',name:'Demo',status:'Draft',price:0,photos:[]}; view='detail'");
+ const html=run('detail()');
+ assert.match(html,/aria-label="Filter and sort photos"/);
+ assert.match(html,/id="owner-photo-filters"/);
+ const panel=nodes.get('#owner-photo-filters')||run("document.querySelector('#owner-photo-filters')");
+ let visible=false;panel.classList.toggle=(name,value)=>{if(name==='is-open')visible=value};
+ const button={value:'false',getAttribute(){return this.value},setAttribute(name,value){this.value=value}};ctx.button=button;
+ run('toggleOwnerPhotoFilters(button)');assert.equal(visible,true);assert.equal(button.value,'true');
+ run('toggleOwnerPhotoFilters(button)');assert.equal(visible,false);assert.equal(button.value,'false');
+});
