@@ -1,0 +1,7 @@
+{
+  "name": "pictide-studio",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Go-powered photo proofing and delivery studio",
+  "scripts": { "start": "go run -p 1 ./cmd/pictide", "test": "go test -p 1 ./..." }
+}
