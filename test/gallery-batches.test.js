@@ -36,3 +36,19 @@ test('gallery detail exposes a compact filter control that opens and closes',()=
  run('toggleOwnerPhotoFilters(button)');assert.equal(visible,true);assert.equal(button.value,'true');
  run('toggleOwnerPhotoFilters(button)');assert.equal(visible,false);assert.equal(button.value,'false');
 });
+test('guest gallery retains filters behind an accessible mobile control',async()=>{
+ const {run,ctx,nodes}=environment();
+ ctx.location.search='?gallery=demo';
+ ctx.fetch=async()=>({ok:true,status:200,json:async()=>({id:'demo',name:'Demo',status:'Published',price:100,photos:[],share_color:'#4f5b2a'})});
+ await run('renderGuest()');
+ const html=nodes.get('#app').innerHTML;
+ assert.match(html,/aria-label="Filter and sort photographs"/);
+ assert.match(html,/id="guest-photo-filters"/);
+ assert.match(html,/aria-label="Filter photographs"/);
+ assert.match(html,/aria-label="Sort photographs"/);
+ const panel=run("document.querySelector('#guest-photo-filters')");let visible=false;
+ panel.classList.toggle=(name,value)=>{if(name==='is-open')visible=value};
+ ctx.button={value:'false',getAttribute(){return this.value},setAttribute(name,value){this.value=value}};
+ run('toggleGuestPhotoFilters(button)');assert.equal(visible,true);assert.equal(ctx.button.value,'true');
+ run('toggleGuestPhotoFilters(button)');assert.equal(visible,false);assert.equal(ctx.button.value,'false');
+});
