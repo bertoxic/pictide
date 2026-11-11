@@ -101,3 +101,9 @@
 
 /* Pictide mark */
 .brand-logo{display:block;width:34px;height:34px;flex:0 0 34px}
+
+/* Async button feedback */
+button.is-loading{cursor:wait;opacity:.8}
+button.is-loading::after{content:"";display:inline-block;flex:none;width:1em;height:1em;margin-left:.35em;vertical-align:-.15em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:button-spin .7s linear infinite}
+@keyframes button-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){button.is-loading::after{animation-duration:1.5s}}
