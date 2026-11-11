@@ -261,7 +261,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request, user *account)
 	err := s.db.Collection("settings").FindOne(r.Context(), bson.M{"_id": user.ID}).Decode(&doc)
 	if errors.Is(err, mongo.ErrNoDocuments) {
 		doc.StudioName = "Pictide Studio"
-		doc.DefaultPrice = 5000
+		doc.DefaultPrice = 0
 	} else if err != nil {
 		fail(w, 500, "Unable to load settings.")
 		return
@@ -405,7 +405,7 @@ func (s *Server) createGallery(w http.ResponseWriter, r *http.Request, user *acc
 		}
 		e := s.db.Collection("settings").FindOne(r.Context(), bson.M{"_id": user.ID}).Decode(&setting)
 		if errors.Is(e, mongo.ErrNoDocuments) {
-			price = 5000
+			price = 0
 			ok = true
 		} else if e == nil {
 			price = setting.DefaultPrice

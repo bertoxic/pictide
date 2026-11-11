@@ -84,6 +84,13 @@ func TestMongoWorkspace(t *testing.T) {
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &insights) != nil || len(insights.Timeline) != 90 || insights.Orders == nil || insights.Withdrawals == nil {
 		t.Fatalf("admin insights: %d %s", w.Code, w.Body.String())
 	}
+	w = request("GET", "/api/settings", nil, "")
+	var defaults struct {
+		DefaultPrice float64 `json:"default_price"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &defaults) != nil || defaults.DefaultPrice != 0 {
+		t.Fatalf("default settings: %d %s", w.Code, w.Body.String())
+	}
 	w = request("PUT", "/api/settings", []byte(`{"studio_name":"Demo","contact_email":"","default_price":"25"}`), "application/json")
 	if w.Code != 200 {
 		t.Fatalf("settings: %d %s", w.Code, w.Body.String())
