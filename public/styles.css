@@ -98,3 +98,6 @@
 .guest-filter-toggle{display:none}.guest-photo-filter-panel,.guest-photo-actions{display:contents}
 @media(max-width:700px){.guest-photo-toolbar{display:flex;gap:10px}.guest-photo-toolbar>.search{flex:1 1 0;min-width:0;width:auto}.guest-filter-toggle{display:inline-flex;flex:0 0 46px;width:46px;padding:10px}.guest-filter-toggle .icon{width:18px;height:18px}.guest-photo-filter-panel{display:none;flex:0 0 100%;gap:10px}.guest-photo-filter-panel.is-open{display:flex}.guest-photo-filter-panel select{flex:1;min-width:0;width:0}.guest-photo-actions{display:flex;flex:0 0 100%;gap:10px}.guest-photo-actions .btn{flex:1}}
 .share-colors{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.share-colors input[type="color"]{height:56px;padding:4px;cursor:pointer}.share-link-row{display:flex;align-items:stretch;gap:8px}.share-link-row input{flex:1;min-width:0}.share-link-row .btn{flex:none}
+
+/* Pictide mark */
+.brand-logo{display:block;width:34px;height:34px;flex:0 0 34px}
