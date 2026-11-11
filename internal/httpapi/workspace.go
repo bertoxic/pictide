@@ -53,6 +53,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, user *account) bool
 		id := strings.TrimPrefix(r.URL.Path, "/api/galleries/")
 		if parts := strings.Split(id, "/"); len(parts) == 2 {
 			switch {
+			case parts[1] == "guest-uploads" && r.Method == "GET":
+				s.listGuestUploads(w, r, user, parts[0])
+				return true
 			case parts[1] == "face-index" && r.Method == "POST":
 				s.backfillFaceIndex(w, r, user, parts[0])
 				return true
@@ -96,6 +99,13 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, user *account) bool
 		default:
 			return false
 		}
+		return true
+	case strings.HasPrefix(r.URL.Path, "/api/guest-uploads/") && strings.HasSuffix(r.URL.Path, "/review") && r.Method == "POST":
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/guest-uploads/"), "/review")
+		if id == "" || strings.Contains(id, "/") {
+			return false
+		}
+		s.reviewGuestUpload(w, r, user, id)
 		return true
 	case r.URL.Path == "/api/orders" && r.Method == "GET":
 		s.listOrders(w, r, user)

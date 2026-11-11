@@ -147,10 +147,6 @@ func (s *Server) customize(w http.ResponseWriter, r *http.Request, user *account
 				fail(w, 400, "Invalid customization value.")
 				return
 			}
-			if k == "allow_guest_upload" && n == 1 {
-				fail(w, 503, "Guest uploads are not available yet.")
-				return
-			}
 			fields[k] = int(n)
 		default:
 			fail(w, 400, "Unknown customization field.")

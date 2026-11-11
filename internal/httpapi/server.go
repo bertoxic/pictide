@@ -451,8 +451,32 @@ func (s *Server) publicAPI(w http.ResponseWriter, r *http.Request, user *account
 		}
 		return false
 
+	case p == "/api/guest-uploads/status":
+		if r.Method != http.MethodPost {
+			fail(w, 405, "Method not allowed.")
+			return true
+		}
+		s.guestUploadStatus(w, r)
+		return true
+
+	case strings.HasPrefix(p, "/api/guest-uploads/"):
+		parts := strings.Split(strings.TrimPrefix(p, "/api/guest-uploads/"), "/")
+		if len(parts) == 2 && parts[0] != "" && parts[1] == "preview" {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				fail(w, 405, "Method not allowed.")
+				return true
+			}
+			s.guestUploadPreview(w, r, parts[0])
+			return true
+		}
+		return false
+
 	case strings.HasPrefix(p, "/api/galleries/"):
 		parts := strings.Split(strings.TrimPrefix(p, "/api/galleries/"), "/")
+		if len(parts) == 2 && parts[0] != "" && parts[1] == "guest-uploads" && r.Method == http.MethodPost {
+			s.submitGuestUploads(w, r, parts[0])
+			return true
+		}
 		if len(parts) == 2 && parts[0] != "" && parts[1] == "face-search" {
 			if r.Method != "POST" {
 				fail(w, 405, "Method not allowed.")
@@ -564,6 +588,9 @@ func isAuthRoute(method, p string) bool {
 			}
 		}
 		return false
+	case strings.HasPrefix(p, "/api/guest-uploads/"):
+		parts := strings.Split(strings.TrimPrefix(p, "/api/guest-uploads/"), "/")
+		return len(parts) == 2 && parts[0] != "" && parts[1] == "review"
 	case strings.HasPrefix(p, "/api/orders/"):
 		sub := strings.TrimPrefix(p, "/api/orders/")
 		return strings.HasSuffix(sub, "/sync") && strings.TrimSuffix(sub, "/sync") != "" && !strings.Contains(strings.TrimSuffix(sub, "/sync"), "/")
