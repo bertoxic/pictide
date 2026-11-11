@@ -16,17 +16,21 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 	"pictide.local/studio/internal/config"
+	"pictide.local/studio/internal/facesearch"
 	"pictide.local/studio/internal/security"
 	"pictide.local/studio/public"
 )
 
 type Server struct {
-	db       *mongo.Database
-	cfg      config.Config
-	r2       *r2Storage
-	mu       sync.Mutex
-	attempts map[string]attempt
+	db           *mongo.Database
+	cfg          config.Config
+	r2           *r2Storage
+	faceIndex    *facesearch.Index
+	faceDetector facesearch.Detector
+	mu           sync.Mutex
+	attempts     map[string]attempt
 }
 
 type attempt struct {
@@ -37,6 +41,8 @@ type attempt struct {
 type account struct {
 	ID           string `bson:"_id"`
 	Username     string `bson:"username"`
+	Email        string `bson:"email,omitempty"`
+	Verified     bool   `bson:"verified"`
 	PasswordHash string `bson:"password_hash"`
 	Role         string `bson:"role"`
 	Version      string `bson:"session_version"`
@@ -52,7 +58,28 @@ func New(ctx context.Context, db *mongo.Database, cfg config.Config) (*Server, e
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.Collection("accounts").Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "username", Value: 1}}, Options: options.Index().SetUnique(true)})
+	faceIndex := facesearch.NewIndex(db)
+	if err = faceIndex.EnsureIndexes(ctx); err != nil {
+		return nil, err
+	}
+	var faceDetector facesearch.Detector
+	if cfg.FaceRecognition {
+		faceDetector, err = facesearch.NewEngine(cfg.FaceRuntime, cfg.FaceDetector, cfg.FaceRecognizer)
+		if err != nil {
+			return nil, err
+		}
+	}
+	_, err = db.Collection("accounts").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "username", Value: 1}}, Options: options.Index().SetUnique(true)},
+		{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetSparse(true)},
+	})
+	if err != nil {
+		return nil, err
+	}
+	_, err = db.Collection("account_links").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "token", Value: 1}}, Options: options.Index().SetUnique(true)},
+		{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +95,29 @@ func New(ctx context.Context, db *mongo.Database, cfg config.Config) (*Server, e
 		return nil, err
 	}
 	_, err = db.Collection("orders").Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "id", Value: 1}}, Options: options.Index().SetUnique(true)})
+	if err != nil {
+		return nil, err
+	}
+	_, err = db.Collection("withdrawals").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "id", Value: 1}}, Options: options.Index().SetUnique(true)},
+		{Keys: bson.D{{Key: "studio_id", Value: 1}, {Key: "created_at", Value: -1}}},
+		{Keys: bson.D{{Key: "reference", Value: 1}}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	_, err = db.Collection("guest_uploads").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "id", Value: 1}}, Options: options.Index().SetUnique(true)},
+		{Keys: bson.D{{Key: "gallery_id", Value: 1}, {Key: "created_at", Value: -1}}},
+		{Keys: bson.D{{Key: "studio_id", Value: 1}}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	_, err = db.Collection("admin_audit").Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "id", Value: 1}}, Options: options.Index().SetUnique(true)},
+		{Keys: bson.D{{Key: "created_at", Value: -1}}},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -89,10 +139,18 @@ func New(ctx context.Context, db *mongo.Database, cfg config.Config) (*Server, e
 	if err != nil {
 		return nil, err
 	}
-	return &Server{db: db, cfg: cfg, r2: r2, attempts: map[string]attempt{}}, nil
+	return &Server{db: db, cfg: cfg, r2: r2, faceIndex: faceIndex, faceDetector: faceDetector, attempts: map[string]attempt{}}, nil
 }
 
 func timestamp() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+
+// Close releases optional native resources owned by the HTTP server.
+func (s *Server) Close() {
+	if s.faceDetector != nil {
+		s.faceDetector.Close()
+	}
+}
+
 func reply(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -197,142 +255,325 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
 	p := r.URL.Path
-	if p == "/api/config" && r.Method == "GET" {
+
+	// 1. Non-API Routes (static assets, previews, short links)
+	if !strings.HasPrefix(p, "/api/") {
+		if strings.HasPrefix(p, "/media/") {
+			if r.Method != "GET" && r.Method != "HEAD" {
+				fail(w, 405, "Method not allowed.")
+				return
+			}
+			user := s.session(r)
+			s.servePreview(w, r, user, strings.TrimPrefix(p, "/media/"))
+			return
+		}
+		if strings.HasPrefix(p, "/l/") {
+			if r.Method != "GET" && r.Method != "HEAD" {
+				fail(w, 405, "Method not allowed.")
+				return
+			}
+			id := strings.TrimPrefix(p, "/l/")
+			if id != "" && !strings.Contains(id, "/") {
+				http.Redirect(w, r, "/?gallery="+id, http.StatusFound)
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+		if p == "/" || (!strings.Contains(p, "..") && !strings.HasPrefix(p, "/media/")) {
+			http.FileServer(http.FS(public.Files)).ServeHTTP(w, r)
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+
+	// 2. API Gateway: extract session for dual-mode and authenticated routes
+	user := s.session(r)
+
+	// 2a. Dispatch public & dual-mode API routes (no auth required)
+	if s.publicAPI(w, r, user) {
+		return
+	}
+
+	// 2b. Dispatch authenticated studio API routes
+	if s.authenticatedAPI(w, r, user) {
+		return
+	}
+
+	// 2c. Clean 404 for any unrecognized /api/ route (replaces line 330 503 catch-all)
+	fail(w, 404, "Endpoint not found.")
+}
+
+func (s *Server) publicAPI(w http.ResponseWriter, r *http.Request, user *account) bool {
+	p := r.URL.Path
+	switch {
+	case p == "/api/config":
+		if r.Method != "GET" && r.Method != "HEAD" {
+			fail(w, 405, "Method not allowed.")
+			return true
+		}
 		mode := "unavailable"
 		if s.cfg.PaystackSecret != "" {
 			mode = "paystack"
 		}
-		reply(w, 200, map[string]any{"payments": mode, "public_url": s.cfg.PublicURL, "email_configured": false, "imgbb_previews": false, "r2_uploads": s.r2 != nil})
-		return
-	}
-	if p == "/api/v1/health" && r.Method == "GET" {
-		reply(w, 200, map[string]string{"app": "pictide", "status": "partial"})
-		return
-	}
-	if p == "/api/login" && r.Method == "POST" {
+		reply(w, 200, map[string]any{
+			"payments":         mode,
+			"public_url":       s.cfg.PublicURL,
+			"email_configured": s.cfg.SMTPHost != "",
+			"imgbb_previews":   s.cfg.ImgBBKey != "",
+			"r2_uploads":       s.r2 != nil,
+			"face_search":      s.faceDetector != nil,
+		})
+		return true
+
+	case p == "/api/v1/health":
+		if r.Method != "GET" && r.Method != "HEAD" {
+			fail(w, 405, "Method not allowed.")
+			return true
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if s.db == nil || s.db.Client().Ping(ctx, readpref.Primary()) != nil {
+			reply(w, 503, map[string]string{
+				"app":      "pictide",
+				"status":   "unavailable",
+				"database": "disconnected",
+			})
+			return true
+		}
+		reply(w, 200, map[string]string{
+			"app":      "pictide",
+			"status":   "ok",
+			"database": "connected",
+		})
+		return true
+
+	case p == "/api/login":
+		if r.Method != "POST" {
+			fail(w, 405, "Method not allowed.")
+			return true
+		}
 		s.login(w, r)
-		return
-	}
-	if p == "/api/logout" && r.Method == "POST" {
-		http.SetCookie(w, &http.Cookie{Name: "lumen_platform", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.secure(), SameSite: http.SameSiteStrictMode})
+		return true
+
+	case p == "/api/logout":
+		if r.Method != "POST" {
+			fail(w, 405, "Method not allowed.")
+			return true
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     "lumen_platform",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   s.secure(),
+			SameSite: http.SameSiteStrictMode,
+		})
 		reply(w, 200, map[string]bool{"ok": true})
-		return
-	}
-	user := s.session(r)
-	if p == "/api/checkout" && r.Method == "POST" {
+		return true
+
+	case p == "/api/session":
+		if r.Method != "GET" && r.Method != "HEAD" {
+			fail(w, 405, "Method not allowed.")
+			return true
+		}
+		if user == nil {
+			reply(w, 200, map[string]any{"owner": false, "passwordRequired": true})
+		} else {
+			reply(w, 200, map[string]any{"owner": true, "passwordRequired": true, "username": user.Username, "role": user.Role})
+		}
+		return true
+
+	case p == "/api/checkout":
+		if r.Method != "POST" {
+			fail(w, 405, "Method not allowed.")
+			return true
+		}
 		s.checkout(w, r)
-		return
-	}
-	if p == "/api/v1/webhooks/paystack" && r.Method == "POST" {
+		return true
+
+	case p == "/api/v1/webhooks/paystack":
+		if r.Method != "POST" {
+			fail(w, 405, "Method not allowed.")
+			return true
+		}
 		s.webhook(w, r)
-		return
-	}
-	if strings.HasPrefix(p, "/api/checkout/") && strings.HasSuffix(p, "/verify") && r.Method == "POST" {
+		return true
+
+	case strings.HasPrefix(p, "/api/checkout/") && strings.HasSuffix(p, "/verify"):
 		id := strings.TrimSuffix(strings.TrimPrefix(p, "/api/checkout/"), "/verify")
 		if id != "" && !strings.Contains(id, "/") {
+			if r.Method != "POST" {
+				fail(w, 405, "Method not allowed.")
+				return true
+			}
 			s.verifyPayment(w, r, id)
-			return
+			return true
 		}
-	}
-	if strings.HasPrefix(p, "/api/photos/") && r.Method == "POST" && strings.HasSuffix(p, "/download-link") {
+		return false
+
+	case strings.HasPrefix(p, "/api/photos/") && strings.HasSuffix(p, "/download-link"):
 		id := strings.TrimSuffix(strings.TrimPrefix(p, "/api/photos/"), "/download-link")
 		if id != "" && !strings.Contains(id, "/") {
+			if r.Method != "POST" {
+				fail(w, 405, "Method not allowed.")
+				return true
+			}
 			s.downloadLink(w, r, id)
-			return
+			return true
 		}
-	}
-	if strings.HasPrefix(p, "/api/download/") && r.Method == "GET" {
+		return false
+
+	case strings.HasPrefix(p, "/api/download/"):
 		id := strings.TrimPrefix(p, "/api/download/")
 		if id != "" && !strings.Contains(id, "/") {
+			if r.Method != "GET" && r.Method != "HEAD" {
+				fail(w, 405, "Method not allowed.")
+				return true
+			}
 			s.download(w, r, id)
-			return
+			return true
 		}
-	}
-	if strings.HasPrefix(p, "/api/photos/") && r.Method == "GET" {
+		return false
+
+	case strings.HasPrefix(p, "/api/photos/"):
 		parts := strings.Split(strings.TrimPrefix(p, "/api/photos/"), "/")
 		if len(parts) == 2 && (parts[1] == "free" || parts[1] == "clean") {
-			s.photoDownload(w, r, parts[0], parts[1])
-			return
-		}
-	}
-	if strings.HasPrefix(p, "/media/") && r.Method == "GET" {
-		s.servePreview(w, r, user, strings.TrimPrefix(p, "/media/"))
-		return
-	}
-	if strings.HasPrefix(p, "/l/") && r.Method == "GET" {
-		id := strings.TrimPrefix(p, "/l/")
-		if id != "" && !strings.Contains(id, "/") {
-			http.Redirect(w, r, "/?gallery="+id, http.StatusFound)
-			return
-		}
-	}
-	if strings.HasPrefix(p, "/api/galleries/") && r.Method == "GET" {
-		parts := strings.Split(strings.TrimPrefix(p, "/api/galleries/"), "/")
-		if len(parts) == 1 && parts[0] != "" {
-			if user != nil {
-				n, err := s.db.Collection("galleries").CountDocuments(r.Context(), bson.M{"studio_id": user.ID, "id": parts[0]})
-				if err != nil {
-					fail(w, 500, "Unable to load gallery.")
-					return
-				}
-				if n > 0 {
-					s.getGallery(w, r, user, parts[0])
-					return
-				}
+			if r.Method != "GET" && r.Method != "HEAD" {
+				fail(w, 405, "Method not allowed.")
+				return true
 			}
-			s.publicGallery(w, r, parts[0])
-			return
+			s.photoDownload(w, r, parts[0], parts[1])
+			return true
+		}
+		return false
+
+	case strings.HasPrefix(p, "/api/galleries/"):
+		parts := strings.Split(strings.TrimPrefix(p, "/api/galleries/"), "/")
+		if len(parts) == 2 && parts[0] != "" && parts[1] == "face-search" {
+			if r.Method != "POST" {
+				fail(w, 405, "Method not allowed.")
+				return true
+			}
+			s.faceSearch(w, r, user, parts[0])
+			return true
+		}
+		if len(parts) == 1 && parts[0] != "" {
+			if r.Method == "GET" || r.Method == "HEAD" {
+				if user != nil {
+					n, err := s.db.Collection("galleries").CountDocuments(r.Context(), bson.M{"studio_id": user.ID, "id": parts[0]})
+					if err != nil {
+						fail(w, 500, "Unable to load gallery.")
+						return true
+					}
+					if n > 0 {
+						s.getGallery(w, r, user, parts[0])
+						return true
+					}
+				}
+				s.publicGallery(w, r, parts[0])
+				return true
+			}
+			return false
 		}
 		if len(parts) == 2 && parts[0] != "" && parts[1] == "free-download" {
+			if r.Method != "GET" && r.Method != "HEAD" {
+				fail(w, 405, "Method not allowed.")
+				return true
+			}
 			s.freeArchive(w, r, parts[0])
-			return
+			return true
 		}
 		if len(parts) == 2 && parts[0] != "" && parts[1] == "qr" {
+			if r.Method != "GET" && r.Method != "HEAD" {
+				fail(w, 405, "Method not allowed.")
+				return true
+			}
 			if user != nil {
 				n, err := s.db.Collection("galleries").CountDocuments(r.Context(), bson.M{"studio_id": user.ID, "id": parts[0]})
 				if err != nil {
 					fail(w, 500, "Unable to load gallery.")
-					return
+					return true
 				}
 				if n > 0 {
 					s.galleryQR(w, r, user, parts[0])
-					return
+					return true
 				}
 			}
 			var gallery struct {
 				StudioID string `bson:"studio_id"`
 			}
 			if s.db.Collection("galleries").FindOne(r.Context(), bson.M{"id": parts[0], "status": "Published", "archived": bson.M{"$ne": 1}}).Decode(&gallery) != nil {
-				http.NotFound(w, r)
-				return
+				fail(w, 404, "Gallery not found.")
+				return true
 			}
 			s.galleryQR(w, r, &account{ID: gallery.StudioID}, parts[0])
-			return
+			return true
 		}
+		return false
 	}
-	if p == "/api/session" && r.Method == "GET" {
-		if user == nil {
-			reply(w, 200, map[string]any{"owner": false, "passwordRequired": true})
-		} else {
-			reply(w, 200, map[string]any{"owner": true, "passwordRequired": true, "username": user.Username, "role": user.Role})
+	return false
+}
+
+func (s *Server) authenticatedAPI(w http.ResponseWriter, r *http.Request, user *account) bool {
+	p := r.URL.Path
+	if !isAuthRoute(r.Method, p) {
+		return false
+	}
+	if user == nil {
+		fail(w, 401, "Please sign in to your studio.")
+		return true
+	}
+	if s.api(w, r, user) {
+		return true
+	}
+	// Recognized authenticated route path, but unsupported HTTP method
+	fail(w, 405, "Method not allowed.")
+	return true
+}
+
+func isAuthRoute(method, p string) bool {
+	switch {
+	case p == "/api/admin/overview",
+		p == "/api/admin/insights",
+		p == "/api/admin/accounts",
+		p == "/api/admin/activity",
+		p == "/api/admin/account-status",
+		p == "/api/security/password",
+		p == "/api/account/email",
+		p == "/api/settings",
+		p == "/api/galleries",
+		p == "/api/orders",
+		p == "/api/wallet":
+		return true
+	case strings.HasPrefix(p, "/api/galleries/"):
+		sub := strings.TrimPrefix(p, "/api/galleries/")
+		parts := strings.Split(sub, "/")
+		if len(parts) == 1 && parts[0] != "" {
+			return true // /api/galleries/:id (PATCH, DELETE)
 		}
-		return
-	}
-	if strings.HasPrefix(p, "/api/") {
-		if user == nil {
-			fail(w, 401, "Please sign in to your studio.")
-			return
+		if len(parts) == 2 && parts[0] != "" {
+			switch parts[1] {
+			case "direct-upload", "cover", "customization", "card-design", "qr", "print", "photos", "face-index":
+				return true
+			case "guest-uploads":
+				return method != http.MethodPost
+			}
 		}
-		if s.api(w, r, user) {
-			return
-		}
-		fail(w, 503, "This feature is still being converted to MongoDB.")
-		return
+		return false
+	case strings.HasPrefix(p, "/api/orders/"):
+		sub := strings.TrimPrefix(p, "/api/orders/")
+		return strings.HasSuffix(sub, "/sync") && strings.TrimSuffix(sub, "/sync") != "" && !strings.Contains(strings.TrimSuffix(sub, "/sync"), "/")
+	case strings.HasPrefix(p, "/api/direct-uploads/"):
+		sub := strings.TrimPrefix(p, "/api/direct-uploads/")
+		return strings.HasSuffix(sub, "/complete") && strings.TrimSuffix(sub, "/complete") != "" && !strings.Contains(strings.TrimSuffix(sub, "/complete"), "/")
+	case strings.HasPrefix(p, "/api/photos/"):
+		sub := strings.TrimPrefix(p, "/api/photos/")
+		return sub != "" && !strings.Contains(sub, "/")
+	default:
+		return false
 	}
-	if p == "/" || (!strings.Contains(p, "..") && !strings.HasPrefix(p, "/media/")) {
-		http.FileServer(http.FS(public.Files)).ServeHTTP(w, r)
-		return
-	}
-	http.NotFound(w, r)
 }

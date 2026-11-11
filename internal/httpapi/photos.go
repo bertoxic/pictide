@@ -50,6 +50,7 @@ func (s *Server) uploadPhotos(w http.ResponseWriter, r *http.Request, user *acco
 	opt.WatermarkSize = int(size)
 	added := 0
 	failures := []string{}
+	indexFailures := []string{}
 	bucket := s.db.GridFSBucket()
 	for _, header := range files {
 		f, e := header.Open()
@@ -106,9 +107,14 @@ func (s *Server) uploadPhotos(w http.ResponseWriter, r *http.Request, user *acco
 			failures = append(failures, header.Filename+": could not save")
 			continue
 		}
+		if err := s.indexFacePhoto(r.Context(), user.ID, galleryID, id, data); err != nil {
+			// The image itself is safely stored; it can be retried through the
+			// studio-only backfill endpoint without losing the upload.
+			indexFailures = append(indexFailures, id)
+		}
 		added++
 	}
-	reply(w, 200, bson.M{"added": added, "errors": failures})
+	reply(w, 200, bson.M{"added": added, "errors": failures, "face_index_errors": indexFailures})
 }
 
 func (s *Server) servePreview(w http.ResponseWriter, r *http.Request, user *account, id string) {
@@ -181,6 +187,13 @@ func (s *Server) photoPrice(w http.ResponseWriter, r *http.Request, user *accoun
 	reply(w, 200, bson.M{"ok": true})
 }
 func (s *Server) archivePhoto(w http.ResponseWriter, r *http.Request, user *account, id string) {
+	var photo struct {
+		GalleryID string `bson:"gallery_id"`
+	}
+	if s.db.Collection("photos").FindOne(r.Context(), bson.M{"id": id, "studio_id": user.ID, "ready": true}).Decode(&photo) != nil {
+		http.NotFound(w, r)
+		return
+	}
 	result, err := s.db.Collection("photos").UpdateOne(r.Context(), bson.M{"id": id, "studio_id": user.ID, "ready": true}, bson.M{"$set": bson.M{"archived": 1}})
 	if err != nil {
 		fail(w, 500, "Unable to remove photo.")
@@ -188,6 +201,10 @@ func (s *Server) archivePhoto(w http.ResponseWriter, r *http.Request, user *acco
 	}
 	if result.MatchedCount == 0 {
 		http.NotFound(w, r)
+		return
+	}
+	if err := s.faceIndex.DeletePhoto(r.Context(), user.ID, photo.GalleryID, id); err != nil {
+		fail(w, 500, "Unable to remove face index data.")
 		return
 	}
 	_, err = s.db.Collection("galleries").UpdateMany(r.Context(), bson.M{"studio_id": user.ID, "cover_photo": id}, bson.M{"$set": bson.M{"cover_photo": ""}})

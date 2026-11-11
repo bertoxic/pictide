@@ -4,9 +4,11 @@ Pictide is being rebuilt on MongoDB. The current implementation supports account
 
 Checkout, payment verification, and paid downloads have MongoDB implementations but have not been tested in this conversion. Payouts, guest submissions, account recovery, registration by email, print layouts, brand image upload and regeneration, and some administration and reporting functions are not implemented. Unsupported routes return `503`. Do not treat this demo as production-ready.
 
+Paid orders must total at least ₦2,500. The platform commission defaults to 10% (`LUMEN_PLATFORM_FEE_BPS=1000`); an existing environment setting overrides this default. New verified payments record Paystack's processing fee against photographer earnings. Older paid orders may not contain a processing fee and require reconciliation. Payment settlement and wallet withdrawals are not production-ready and must be verified end to end before use with real money. The proposed ₦15,000 withdrawal minimum is not enforced because withdrawals are not implemented. The 3 GB quota and seven-day expiry are also not yet implemented.
+
 ## Run locally
 
-Install Go 1.23.3 or later and provide a reachable MongoDB instance. Copy `.env.example` to `.env` and set `MONGODB_URI`, `PAYSTACK_SECRET_KEY`, `LUMEN_ADMIN_PASSWORD` (at least 12 characters), and `LUMEN_SIGNING_KEY` (at least 32 characters). `MONGODB_DATABASE` defaults to `pictide`. The initial administrator is `admin`; the password is used only when the account is first created. Then run:
+Install Go 1.25.0 or later and provide a reachable MongoDB instance. Copy `.env.example` to `.env` and set `MONGODB_URI`, `PAYSTACK_SECRET_KEY`, `LUMEN_ADMIN_PASSWORD` (at least 12 characters), and `LUMEN_SIGNING_KEY` (at least 32 characters). `MONGODB_DATABASE` defaults to `pictide`. The initial administrator is `admin`; the password is used only when the account is first created. Then run:
 
 ```powershell
 go run -p 1 ./cmd/pictide
@@ -17,6 +19,10 @@ The server listens on `127.0.0.1:3000` by default. `LUMEN_HOST` and `PORT` overr
 For Vercel, select the Go preset and repository root (`./`). The root `main.go` is the detected entrypoint. Set `MONGODB_URI`, `PAYSTACK_SECRET_KEY`, `LUMEN_ADMIN_PASSWORD`, `LUMEN_SIGNING_KEY`, `PUBLIC_URL` (the HTTPS deployment origin), and `LUMEN_HOST=0.0.0.0` in the project environment. Also set `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET_NAME` there: the local `.env` file is not deployed. `MONGODB_DATABASE` is optional. Vercel must be able to reach MongoDB and R2.
 
 With R2 configured, the browser uploads each original directly to R2 with a short-lived signed URL, avoiding Vercel's 4.5 MB request limit. The server retrieves and processes the image, and directs authorized full-resolution downloads and free-photo ZIP downloads to temporary signed R2 URLs. Existing GridFS master images are copied to R2 when downloaded. Each uploaded original is limited to 30 MiB; image processing and ZIP creation still consume function time and memory. If a browser cannot reach R2, images of up to 4,000,000 bytes fall back to the server and GridFS; larger images require the R2 connection. Without R2, uploads pass through the function and remain subject to Vercel's body-size limit.
+
+## Optional face search
+
+Face search is disabled by default. Build with `-tags face_recognition` and CGO enabled, then set `PICTIDE_FACE_RECOGNITION=true` and the ONNX runtime, detector, recognizer, and model-version variables in `.env.example`. New uploads are indexed after they are committed; a studio can use **Index photos** to backfill an existing gallery. Face embeddings are stored only in the private `face_indexes` collection and are always queried by studio, gallery, and model. A guest's submitted selfie is processed only for the request and is not persisted.
 
 Browser uploads require a CORS rule on the R2 bucket. Add the exact Vercel app origin to an allowed rule for method `PUT` and header `Content-Type`. For local testing, also allow the origin used to access the app (for example, `http://127.0.0.1:8080`). Preserve any other rules the bucket already uses. Cloudflare's [R2 CORS documentation](https://developers.cloudflare.com/r2/buckets/cors/) describes the dashboard configuration. Signed upload URLs remain usable for up to 10 minutes and signed download URLs for up to two minutes; anyone holding one can use it until expiry.
 

@@ -64,3 +64,23 @@ func TestMongoDBConfiguration(t *testing.T) {
 		t.Fatal("MongoDB database override was not loaded", err)
 	}
 }
+
+func TestFaceRecognitionConfiguration(t *testing.T) {
+	t.Setenv("LUMEN_ENV_FILE", filepath.Join(t.TempDir(), "missing.env"))
+	t.Setenv("LUMEN_PAYMENT_MODE", "paystack")
+	t.Setenv("PAYSTACK_SECRET_KEY", "test")
+	t.Setenv("LUMEN_HOST", "127.0.0.1")
+	t.Setenv("PICTIDE_FACE_RECOGNITION", "true")
+	if _, err := Load(); err == nil {
+		t.Fatal("face recognition must require all model paths")
+	}
+	t.Setenv("PICTIDE_FACE_RUNTIME", "runtime.dll")
+	t.Setenv("PICTIDE_FACE_DETECTOR", "detector.onnx")
+	t.Setenv("PICTIDE_FACE_RECOGNIZER", "recognizer.onnx")
+	t.Setenv("PICTIDE_FACE_MODEL", "test-model-v1")
+	t.Setenv("PICTIDE_FACE_THRESHOLD", "0.7")
+	c, err := Load()
+	if err != nil || !c.FaceRecognition || c.FaceModel != "test-model-v1" || c.FaceThreshold != 0.7 {
+		t.Fatalf("face configuration was not loaded: %+v %v", c, err)
+	}
+}

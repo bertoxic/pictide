@@ -53,6 +53,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, user *account) bool
 		id := strings.TrimPrefix(r.URL.Path, "/api/galleries/")
 		if parts := strings.Split(id, "/"); len(parts) == 2 {
 			switch {
+			case parts[1] == "face-index" && r.Method == "POST":
+				s.backfillFaceIndex(w, r, user, parts[0])
+				return true
 			case parts[1] == "direct-upload" && r.Method == "POST":
 				s.startDirectUpload(w, r, user, parts[0])
 				return true
@@ -530,6 +533,10 @@ func (s *Server) archiveGallery(w http.ResponseWriter, r *http.Request, user *ac
 		} else {
 			fail(w, 500, "Unable to remove gallery.")
 		}
+		return
+	}
+	if err := s.faceIndex.DeleteGallery(r.Context(), user.ID, id); err != nil {
+		fail(w, 500, "Unable to remove face index data.")
 		return
 	}
 	reply(w, 200, bson.M{"ok": true})

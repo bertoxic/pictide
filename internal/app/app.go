@@ -49,6 +49,7 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("application initialization failed: %w", err)
 	}
+	defer handler.Close()
 	host := c.Host
 	if os.Getenv("VERCEL") == "1" {
 		host = "0.0.0.0"

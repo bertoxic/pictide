@@ -207,6 +207,11 @@ func (s *Server) completeDirectUpload(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	success = true
+	if err := s.indexFacePhoto(r.Context(), user.ID, job.GalleryID, id, data); err != nil {
+		// The completed photo remains usable and the owner can retry this
+		// non-critical derivative through the face-index backfill endpoint.
+		_, _ = s.db.Collection("photos").UpdateOne(r.Context(), bson.M{"id": id, "studio_id": user.ID}, bson.M{"$set": bson.M{"face_index_error": true}})
+	}
 	_, _ = s.db.Collection("direct_uploads").UpdateOne(r.Context(), bson.M{"_id": id, "studio_id": user.ID, "lease": lease}, bson.M{"$set": bson.M{"status": "complete"}, "$unset": bson.M{"lease": "", "lease_until": ""}})
 	finished = true
 	_ = s.r2.delete(r.Context(), job.ObjectKey)

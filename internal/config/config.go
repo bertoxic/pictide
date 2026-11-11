@@ -19,6 +19,9 @@ type Config struct {
 	ImgBBKey                                                                                         string
 	ImgBBPreviews                                                                                    bool
 	MongoDBURI, MongoDBDatabase                                                                      string
+	FaceRecognition                                                                                  bool
+	FaceRuntime, FaceDetector, FaceRecognizer, FaceModel                                             string
+	FaceThreshold                                                                                    float64
 }
 
 func Load() (Config, error) {
@@ -35,7 +38,7 @@ func Load() (Config, error) {
 		}
 		return fallback
 	}
-	c := Config{ImgBBKey: os.Getenv("IMGBB_API_KEY"), SMTPHost: os.Getenv("LUMEN_SMTP_HOST"), SMTPPort: get("LUMEN_SMTP_PORT", "587"), SMTPUser: os.Getenv("LUMEN_SMTP_USER"), SMTPPassword: os.Getenv("LUMEN_SMTP_PASSWORD"), SMTPFrom: os.Getenv("LUMEN_SMTP_FROM"), Host: get("LUMEN_HOST", "127.0.0.1"), Port: get("PORT", "3000"), DataDir: get("LUMEN_DATA_DIR", "data"), SigningKey: os.Getenv("LUMEN_SIGNING_KEY"), AdminPassword: os.Getenv("LUMEN_ADMIN_PASSWORD"), PublicURL: strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"), PaymentMode: get("LUMEN_PAYMENT_MODE", "paystack"), PaystackSecret: os.Getenv("PAYSTACK_SECRET_KEY")}
+	c := Config{ImgBBKey: os.Getenv("IMGBB_API_KEY"), SMTPHost: os.Getenv("LUMEN_SMTP_HOST"), SMTPPort: get("LUMEN_SMTP_PORT", "587"), SMTPUser: os.Getenv("LUMEN_SMTP_USER"), SMTPPassword: os.Getenv("LUMEN_SMTP_PASSWORD"), SMTPFrom: os.Getenv("LUMEN_SMTP_FROM"), Host: get("LUMEN_HOST", "127.0.0.1"), Port: get("PORT", "3000"), DataDir: get("LUMEN_DATA_DIR", "data"), SigningKey: os.Getenv("LUMEN_SIGNING_KEY"), AdminPassword: os.Getenv("LUMEN_ADMIN_PASSWORD"), PublicURL: strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"), PaymentMode: get("LUMEN_PAYMENT_MODE", "paystack"), PaystackSecret: os.Getenv("PAYSTACK_SECRET_KEY"), FaceRuntime: os.Getenv("PICTIDE_FACE_RUNTIME"), FaceDetector: os.Getenv("PICTIDE_FACE_DETECTOR"), FaceRecognizer: os.Getenv("PICTIDE_FACE_RECOGNIZER"), FaceModel: get("PICTIDE_FACE_MODEL", "sface-128-v1")}
 	c.MongoDBURI = os.Getenv("MONGODB_URI")
 	c.MongoDBDatabase = get("MONGODB_DATABASE", "pictide")
 	c.R2AccountID, c.R2AccessKeyID, c.R2SecretAccessKey, c.R2BucketName = os.Getenv("R2_ACCOUNT_ID"), os.Getenv("R2_ACCESS_KEY_ID"), os.Getenv("R2_SECRET_ACCESS_KEY"), os.Getenv("R2_BUCKET_NAME")
@@ -50,6 +53,18 @@ func Load() (Config, error) {
 	if c.ImgBBPreviews && c.ImgBBKey == "" {
 		return Config{}, fmt.Errorf("IMGBB_API_KEY is required when ImgBB previews are enabled")
 	}
+	c.FaceRecognition, enabledErr = strconv.ParseBool(get("PICTIDE_FACE_RECOGNITION", "false"))
+	if enabledErr != nil {
+		return Config{}, fmt.Errorf("PICTIDE_FACE_RECOGNITION must be true or false")
+	}
+	if c.FaceRecognition && (c.FaceRuntime == "" || c.FaceDetector == "" || c.FaceRecognizer == "" || c.FaceModel == "") {
+		return Config{}, fmt.Errorf("PICTIDE_FACE_RUNTIME, PICTIDE_FACE_DETECTOR, PICTIDE_FACE_RECOGNIZER and PICTIDE_FACE_MODEL are required when face recognition is enabled")
+	}
+	threshold, err := strconv.ParseFloat(get("PICTIDE_FACE_THRESHOLD", "0.55"), 64)
+	if err != nil || threshold < -1 || threshold > 1 {
+		return Config{}, fmt.Errorf("PICTIDE_FACE_THRESHOLD must be between -1 and 1")
+	}
+	c.FaceThreshold = threshold
 	c.MediaDir = get("LUMEN_MEDIA_DIR", filepath.Join(c.DataDir, "media"))
 	if c.PublicURL != "" {
 		u, err := url.Parse(c.PublicURL)
@@ -63,7 +78,7 @@ func Load() (Config, error) {
 	if c.PaymentMode == "paystack" && c.PaystackSecret == "" {
 		return Config{}, fmt.Errorf("PAYSTACK_SECRET_KEY is required in paystack mode")
 	}
-	fee, err := strconv.Atoi(get("LUMEN_PLATFORM_FEE_BPS", "0"))
+	fee, err := strconv.Atoi(get("LUMEN_PLATFORM_FEE_BPS", "1000"))
 	if err != nil || fee < 0 || fee > 10000 {
 		return Config{}, fmt.Errorf("invalid LUMEN_PLATFORM_FEE_BPS")
 	}
