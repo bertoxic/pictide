@@ -18,15 +18,26 @@ async function saveGallery(e,id){e.preventDefault();let b=Object.fromEntries(new
 async function openGallery(id){current=await api('/api/galleries/'+id);current.photos=current.photos.filter(p=>!p.archived);view='detail';render()}
 function detail(){let g=current;return `<button class="text-link" onclick="navigate('galleries')">← &nbsp; All galleries</button><div class="page-head"><div><div class="eyebrow">${esc(g.status)} gallery</div><h1>${esc(g.name)}</h1><p class="sub">${esc(g.client||'Personal gallery')} &nbsp; · &nbsp; ${date(g.event_date)} &nbsp; · &nbsp; ${money(g.price)} per photo</p></div><div class="details-bar"><button class="btn" onclick="galleryModal(current)">${icon('pencil')} Edit</button><button class="btn" onclick="document.querySelector('#logo-upload').click()">${icon('image')} Watermark logo</button><input id="logo-upload" type="file" accept="image/png,image/jpeg,image/webp" hidden onchange="uploadLogo(this)"><button class="btn" onclick="shareModal('${g.id}')">${icon('share-2')} Share</button><button class="btn primary" onclick="document.querySelector('#upload').click()">${icon('upload')} Add photos</button><input id="upload" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onchange="uploadPhotos(this)"></div></div><div class="table-wrap" style="padding:18px 20px;display:flex;justify-content:space-between;align-items:center;margin:20px 0"><span><b>${g.status==='Published'?'Gallery is live':'Your gallery is a draft'}</b><br><small class="sub">${g.status==='Published'?'Guests with the link can view this gallery.':'Publish when you are ready to share with guests.'}</small></span><button class="btn" onclick="togglePublish()">${g.status==='Published'?'Unpublish':'Publish gallery'}</button></div><div class="section-title"><div><h2>Photographs</h2><p class="sub">${g.photos.length} photos in this gallery</p></div><button class="text-link" onclick="deleteGallery()" style="color:#a47769">Delete gallery</button></div><div class="detail-grid">${g.photos.map(p=>`<div class="photo"><img src="/media/${p.id}" alt="${esc(p.name)}"><button title="Remove photo" onclick="deletePhoto('${p.id}')">×</button></div>`).join('')||'<div class="empty-state" style="grid-column:1/-1">Your gallery is waiting for its first photographs.<br><br><button class="btn primary" onclick="document.querySelector(\'#upload\').click()">Upload photos</button></div>'}</div>`}
 async function uploadLogo(input){if(!input.files.length)return;let f=new FormData();f.append('logo',input.files[0]);try{await api('/api/galleries/'+current.id+'/logo',{method:'POST',body:f});toast('Logo saved for new uploads');await openGallery(current.id)}catch(e){toast(e.message)}}
+let photoUploadActive=false;
+function showPhotoUploadStatus(message){
+  let el=document.getElementById('photo-upload-status');
+  if(!el){el=document.createElement('div');el.id='photo-upload-status';el.className='photo-upload-status';el.setAttribute('role','status');el.setAttribute('aria-live','polite');document.body.appendChild(el)}
+  el.textContent=message;
+}
+function hidePhotoUploadStatus(){document.getElementById('photo-upload-status')?.remove()}
 async function uploadPhotos(input){
   if(!input.files.length)return;
+  if(photoUploadActive){input.value='';return toast('A photo upload is already in progress.')}
   const files=Array.from(input.files),galleryId=current.id;
   if(files.length>50){input.value='';return toast('Upload at most 50 photos at a time.')}
+  photoUploadActive=true;
+  showPhotoUploadStatus(`Uploading and preparing ${files.length} ${files.length===1?'photo':'photos'}…`);
   toast('Uploading and preparing photos…');
   try{
     if(!config.r2_uploads){let f=new FormData();for(const file of files)f.append('photos',file);let r=await api('/api/galleries/'+galleryId+'/photos',{method:'POST',body:f});await refresh();await openGallery(galleryId);toast(`${r.added} photos added${r.errors.length?' · '+r.errors.join(', '):''}`);return}
     let added=0,fallbacks=0,errors=[];
-    for(const file of files){
+    for(const [index,file] of files.entries()){
+      showPhotoUploadStatus(`Uploading photo ${index+1} of ${files.length}…`);
       try{
         let job=await api('/api/galleries/'+galleryId+'/direct-upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,size:file.size})});
         let result;
@@ -41,9 +52,10 @@ async function uploadPhotos(input){
         await api('/api/direct-uploads/'+job.upload_id+'/complete',{method:'POST'});added++;
       }catch(err){errors.push(file.name+': '+err.message)}
     }
+    showPhotoUploadStatus('Finishing photo upload…');
     await refresh();await openGallery(galleryId);
     toast(`${added} photos added${fallbacks?' · R2 CORS needs attention':''}${errors.length?' · '+errors.join(', '):''}`);
-  }catch(e){toast(e.message)}finally{input.value=''}
+  }catch(e){toast(e.message)}finally{photoUploadActive=false;hidePhotoUploadStatus();input.value=''}
 }
 async function togglePublish(){await api('/api/galleries/'+current.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:current.status==='Published'?'Draft':'Published'})});await refresh();await openGallery(current.id);toast('Gallery status updated')}
 async function deletePhoto(id){if(!await showConfirm({title:'Remove this photo?',message:'It will be removed from the gallery. Photos with orders are kept for delivery.',confirmLabel:'Remove photo',danger:true}))return;try{await api('/api/photos/'+id,{method:'DELETE'});await refresh();await openGallery(current.id);toast('Photo removed')}catch(e){toast(e.message)}}

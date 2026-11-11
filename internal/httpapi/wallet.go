@@ -10,7 +10,7 @@ import (
 // wallet reports recorded balances; payout creation remains unavailable.
 func (s *Server) wallet(w http.ResponseWriter, r *http.Request, user *account) {
 	ctx := r.Context()
-	orders, err := s.db.Collection("orders").Find(ctx, bson.M{"studio_id": user.ID, "status": "Paid", "payment_provider": "paystack"}, options.Find().SetProjection(bson.M{"amount": 1, "platform_fee": 1}))
+	orders, err := s.db.Collection("orders").Find(ctx, bson.M{"studio_id": user.ID, "status": "Paid", "payment_provider": "paystack"}, options.Find().SetProjection(bson.M{"amount": 1, "platform_fee": 1, "processing_fee": 1}))
 	if err != nil {
 		fail(w, 500, "Could not load wallet.")
 		return
@@ -19,14 +19,15 @@ func (s *Server) wallet(w http.ResponseWriter, r *http.Request, user *account) {
 	var earned int64
 	for orders.Next(ctx) {
 		var order struct {
-			Amount int64 `bson:"amount"`
-			Fee    int64 `bson:"platform_fee"`
+			Amount        int64 `bson:"amount"`
+			Fee           int64 `bson:"platform_fee"`
+			ProcessingFee int64 `bson:"processing_fee"`
 		}
 		if orders.Decode(&order) != nil {
 			fail(w, 500, "Could not load wallet.")
 			return
 		}
-		earned += order.Amount - order.Fee
+		earned += order.Amount - order.Fee - order.ProcessingFee
 	}
 	if orders.Err() != nil {
 		fail(w, 500, "Could not load wallet.")

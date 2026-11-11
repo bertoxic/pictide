@@ -82,6 +82,7 @@ func (c *Client) Initialize(ctx context.Context, email string, amount int64, ref
 type Transaction struct {
 	Status, Reference, Currency string
 	Amount                      int64
+	Fees                        *int64 `json:"fees"`
 }
 
 func (c *Client) Verify(ctx context.Context, reference string) (Transaction, error) {

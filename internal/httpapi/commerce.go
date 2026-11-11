@@ -35,6 +35,7 @@ type purchase struct {
 	Status          string      `bson:"status"`
 	Created         string      `bson:"created"`
 	PlatformFee     int64       `bson:"platform_fee"`
+	ProcessingFee   *int64      `bson:"processing_fee,omitempty"`
 	Items           []orderItem `bson:"items"`
 	TokenHash       string      `bson:"token_hash"`
 	DownloadsUsed   int         `bson:"downloads_used"`
@@ -102,8 +103,16 @@ func (s *Server) checkout(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, bson.M{"mode": "free", "photos": ids})
 		return
 	}
+	if amount < 250000 {
+		fail(w, 400, "Paid orders must total at least ₦2,500. Please select more photos.")
+		return
+	}
 	if s.cfg.PaystackSecret == "" {
 		fail(w, 503, "Paystack is not configured.")
+		return
+	}
+	if s.cfg.FeeBPS <= 0 || s.cfg.FeeBPS >= 10000 {
+		fail(w, 503, "Paid checkout is not configured.")
 		return
 	}
 	id, err := security.Token()
@@ -150,7 +159,10 @@ func (s *Server) verifyPurchase(r *http.Request, o purchase) (string, error) {
 	}
 	switch transaction.Status {
 	case "success":
-		_, err = s.db.Collection("orders").UpdateOne(r.Context(), bson.M{"id": o.ID, "amount": o.Amount, "status": bson.M{"$in": bson.A{"Pending", "Failed"}}}, bson.M{"$set": bson.M{"status": "Paid", "payment_provider": "paystack"}})
+		if transaction.Fees == nil || *transaction.Fees < 0 || *transaction.Fees > o.Amount-o.PlatformFee {
+			return "", fmt.Errorf("payment processing fee unavailable or invalid")
+		}
+		_, err = s.db.Collection("orders").UpdateOne(r.Context(), bson.M{"id": o.ID, "amount": o.Amount, "status": bson.M{"$in": bson.A{"Pending", "Failed"}}}, bson.M{"$set": bson.M{"status": "Paid", "payment_provider": "paystack", "processing_fee": *transaction.Fees}})
 		if err != nil {
 			return "", err
 		}
@@ -220,6 +232,7 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 			Status    string `json:"status"`
 			Currency  string `json:"currency"`
 			Amount    int64  `json:"amount"`
+			Fees      *int64 `json:"fees"`
 		} `json:"data"`
 	}
 	if json.Unmarshal(body, &event) != nil {
@@ -227,7 +240,29 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if event.Event == "charge.success" && event.Data.Status == "success" && event.Data.Currency == "NGN" {
-		_, err = s.db.Collection("orders").UpdateOne(r.Context(), bson.M{"id": event.Data.Reference, "amount": event.Data.Amount, "status": bson.M{"$in": bson.A{"Pending", "Failed"}}}, bson.M{"$set": bson.M{"status": "Paid", "payment_provider": "paystack"}})
+		var order purchase
+		err = s.db.Collection("orders").FindOne(r.Context(), bson.M{"id": event.Data.Reference, "amount": event.Data.Amount}).Decode(&order)
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			w.WriteHeader(200)
+			return
+		}
+		if err != nil {
+			w.WriteHeader(500)
+			return
+		}
+		if order.Status == "Paid" {
+			w.WriteHeader(200)
+			return
+		}
+		if event.Data.Fees == nil || *event.Data.Fees < 0 || *event.Data.Fees > order.Amount-order.PlatformFee {
+			if _, err = s.verifyPurchase(r, order); err != nil {
+				w.WriteHeader(503)
+				return
+			}
+			w.WriteHeader(200)
+			return
+		}
+		_, err = s.db.Collection("orders").UpdateOne(r.Context(), bson.M{"id": event.Data.Reference, "amount": event.Data.Amount, "status": bson.M{"$in": bson.A{"Pending", "Failed"}}}, bson.M{"$set": bson.M{"status": "Paid", "payment_provider": "paystack", "processing_fee": *event.Data.Fees}})
 		if err != nil {
 			w.WriteHeader(500)
 			return

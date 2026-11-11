@@ -7,7 +7,12 @@ const vm = require('node:vm');
 function environment({r2Fails = false} = {}) {
   const calls = [];
   const toastNode = {textContent: '', classList: {add() {}, remove() {}}};
-  const document = {querySelector() { return toastNode; }, addEventListener() {}};
+  let status;
+  const document = {querySelector() { return toastNode; }, addEventListener() {},
+    getElementById() { return status; },
+    createElement() { return {setAttribute() {}, remove() { status = null; }}; },
+    body: {appendChild(node) { status = node; }}
+  };
   class FormData { constructor() { this.entries = []; } append(name, value) { this.entries.push([name, value]); } }
   const response = body => ({ok: true, status: 200, json: async () => body});
   const fetch = async (url, options = {}) => {

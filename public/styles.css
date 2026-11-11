@@ -107,3 +107,4 @@ button.is-loading{cursor:wait;opacity:.8}
 button.is-loading::after{content:"";display:inline-block;flex:none;width:1em;height:1em;margin-left:.35em;vertical-align:-.15em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:button-spin .7s linear infinite}
 @keyframes button-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){button.is-loading::after{animation-duration:1.5s}}
+.photo-upload-status{position:fixed;right:20px;bottom:20px;z-index:10000;max-width:calc(100vw - 40px);padding:14px 18px;border-radius:12px;background:#303b20;color:#fff;box-shadow:0 8px 28px #0003;font-size:14px;font-weight:600}
